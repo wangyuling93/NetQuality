@@ -64,7 +64,8 @@ run_trace() {
   local out="$2"
   local err="$3"
   local mode="$4" # tcp|icmp
-  local -a args=(-q 3 -g cn --raw -m 30)
+  # -q 1：每跳只测 1 次，避免同跳重复三行
+  local -a args=(-q 1 -g cn --raw -m 30)
 
   if [[ "$mode" == "tcp" ]]; then
     args+=(-T -p 80 --psize 1400)
@@ -244,20 +245,43 @@ dc = color_map.get(dom_color, color_map["yellow"])
 bold, cyan, dim, reset, blue = "\033[1m", "\033[36m", "\033[2m", "\033[0m", "\033[34m"
 purple = "\033[35m"
 
+# 连续同线路段：[(start, end, asn, name, quality)]
+segments = []
+for h in hops:
+    if h["ip"] == "*" or not h.get("asn"):
+        continue
+    ln, lq, _ = asn_name(h["asn"])
+    try:
+        hop_n = int(h["hop"])
+    except ValueError:
+        continue
+    if segments and segments[-1][2] == h["asn"]:
+        segments[-1][1] = hop_n
+    else:
+        segments.append([hop_n, hop_n, h["asn"], ln, lq])
+
 print()
-print(f"{bold}{cyan}======== 去程检测摘要（本机 → {target}）========{reset}")
-print(f"{bold}国际出境：{c}{name} [{quality}]{reset}  {dim}(决定出国段质量){reset}")
+print(f"{bold}{cyan}======== 去程检测摘要 v3（本机 → {target}）========{reset}")
+print(f"{bold}国际出境：{c}{name} [{quality}]{reset}  {dim}← 看这个判断出国是否精品网{reset}")
 if domestic_asn:
-    print(f"{bold}国内接入：{dc}{dom_name} [{dom_q}线路]{reset}  {dim}AS{domestic_asn}{reset}")
+    print(f"{bold}国内接入：{dc}{dom_name} [{dom_q}线路]{reset}  AS{domestic_asn}")
 else:
     print(f"{bold}国内接入：{dim}未识别到国内公网 ASN{reset}")
 
-# 出国点提示
+# 明确标出优质/普通分别是哪几跳
+prem_segs = [s for s in segments if s[4] == "优质"]
+norm_segs = [s for s in segments if s[4] == "普通"]
+if prem_segs:
+    bits = [f"第{a}-{b}跳 {n}(AS{asn})" if a != b else f"第{a}跳 {n}(AS{asn})" for a,b,asn,n,_ in prem_segs]
+    print(f"{bold}{color_map['green']}优质段：{'；'.join(bits)}{reset}")
+if norm_segs:
+    bits = [f"第{a}-{b}跳 {n}(AS{asn})" if a != b else f"第{a}跳 {n}(AS{asn})" for a,b,asn,n,_ in norm_segs]
+    print(f"{bold}{color_map['yellow']}普通段：{'；'.join(bits)}{reset}")
+
 exit_hop = next((h for h in hops if h.get("asn") == exit_asn and h["ip"] != "*"), None)
 if exit_hop and not is_china(exit_hop):
-    print(f"出境位置：{purple}{exit_hop['where'] or '境外'}{reset}  AS{exit_asn}  ~{exit_hop['rtt']:.0f}ms" if exit_hop["rtt"] is not None else f"出境位置：{purple}{exit_hop['where'] or '境外'}{reset}  AS{exit_asn}")
-elif exit_hop:
-    print(f"特征 ASN：AS{exit_asn} @ {exit_hop['where'] or exit_hop['ip']}")
+    rtt_s = f"  ~{exit_hop['rtt']:.0f}ms" if exit_hop["rtt"] is not None else ""
+    print(f"出境位置：{purple}{exit_hop['where'] or '境外'}{reset}  AS{exit_asn}{rtt_s}")
 
 seen = []
 for h in hops:
@@ -266,28 +290,41 @@ for h in hops:
         seen.append(a)
 asn_path = " → ".join(f"AS{a}({asn_name(a)[0]})" for a in seen) if seen else "(无 ASN)"
 print(f"ASN 路径：{blue}{asn_path}{reset}")
-print(f"{dim}解读：国际出境=出国用的三网线路；CMIN2/CN2/9929=优质，CMI/163/4837=普通。{reset}")
+print(f"{dim}CMIN2/CN2/9929=优质；CMI/163/4837=普通。下面每跳「质量」列可直接看。{reset}")
 print()
-print(f"{bold}详细跳数（已合并多次探测）：{reset}")
-print(f"{'跳':>3}  {'延迟':>8}  {'IP':<18} {'线路':<12} {'ASN':<10} 地理位置 / 归属")
-print("-" * 88)
+print(f"{bold}详细跳数：{reset}")
+print(f"{'跳':>3}  {'延迟':>8}  {'质量':<6} {'线路':<10} {'IP':<18} {'ASN':<10} 位置")
+print("-" * 86)
+prev_q = None
 for h in hops:
     if h["ip"] == "*":
-        print(f"{h['hop']:>3}  {'*':>8}  {'*':<18} {'':<12} {'':<10} {dim}超时{reset}")
+        print(f"{h['hop']:>3}  {'*':>8}  {'':6} {'':10} {'*':<18} {'':10} {dim}超时{reset}")
+        prev_q = None
         continue
-    rtt = f"{h['rtt']:.2f}ms" if h["rtt"] is not None else "-"
-    ln, lq, lc = asn_name(h["asn"]) if h.get("asn") else ("-", "", "yellow")
-    line_s = f"{ln}" if h.get("asn") else "-"
-    if lq == "优质":
-        line_s = f"{color_map['green']}{ln}{reset}"
-    elif h.get("asn") and lq == "普通":
-        line_s = f"{color_map['yellow']}{ln}{reset}"
+    rtt = f"{h['rtt']:.1f}ms" if h["rtt"] is not None else "-"
+    if h.get("asn"):
+        ln, lq, lc = asn_name(h["asn"])
+        if lq == "优质":
+            q_s = f"{color_map['green']}优质{reset}"
+            ln_s = f"{color_map['green']}{ln}{reset}"
+        elif lq == "普通":
+            q_s = f"{color_map['yellow']}普通{reset}"
+            ln_s = f"{color_map['yellow']}{ln}{reset}"
+        else:
+            q_s = "其他"
+            ln_s = ln
+        # 线路切换时加分隔提示
+        if prev_q is not None and lq != prev_q and lq in ("优质", "普通"):
+            print(f"{dim}      ↓ 进入{lq}段 {ln}{reset}")
+        prev_q = lq
+    else:
+        q_s, ln_s, prev_q = "-", "-", prev_q
     asn = f"AS{h['asn']}" if h["asn"] else "-"
-    meta = " / ".join(x for x in (h["where"], h["owner"]) if x)
-    # 去掉过长 owner 噪声
-    if len(meta) > 56:
-        meta = meta[:55] + "…"
-    print(f"{h['hop']:>3}  {rtt:>8}  {h['ip']:<18} {line_s:<21} {asn:<10} {meta}")
+    meta = h["where"] or h.get("owner") or ""
+    if len(meta) > 40:
+        meta = meta[:39] + "…"
+    # 宽度按可见字符近似（颜色码不影响阅读）
+    print(f"{h['hop']:>3}  {rtt:>8}  {q_s:<15} {ln_s:<19} {h['ip']:<18} {asn:<10} {meta}")
 print()
 if not hops:
     print(f"{color_map['red']}未拿到任何跳数。请确认：已关代理、IP 正确、并用 sudo 运行。{reset}")
@@ -300,7 +337,7 @@ PY
 }
 
 main() {
-  echo -e "${C_BOLD}${C_CYAN}去程检测（macOS / Linux）${C_RESET}"
+  echo -e "${C_BOLD}${C_CYAN}去程检测 v3（macOS / Linux）${C_RESET}"
   echo -e "${C_DIM}仓库：https://github.com/wangyuling93/NetQuality${C_RESET}"
   echo
   warn_proxy
