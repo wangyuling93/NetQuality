@@ -5,7 +5,7 @@
 #   bash forward2.sh 1.2.3.4
 set -euo pipefail
 
-SCRIPT_VERSION="v2026-08-01-fwd2"
+SCRIPT_VERSION="v2026-08-01-fwd3"
 REPO_URL="https://github.com/wangyuling93/NetQuality"
 CMD_TMPL='bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/forward2.sh)'
 
@@ -112,32 +112,39 @@ run_trace() {
   fi
 }
 
-path_complete_enough() {
+# 是否到达目标 IP（仅此才算真正完整；仅看到 CMIN2/香港不够，否则会跳过 ICMP）
+path_reached_target() {
+  local raw="$1"
+  local ip="$2"
+  grep -Eq "^[0-9]+\\|${ip//./\\.}\\|" "$raw" 2>/dev/null
+}
+
+# 给多次探测打分，保留「最完整」的一条（优先到达目标）
+score_raw_path() {
   local raw="$1"
   local ip="$2"
   python3 - "$raw" "$ip" <<'PY'
 import sys
 raw, target = sys.argv[1], sys.argv[2]
 premium = {"58807", "9929", "10099", "4809", "23764"}
-saw_target = saw_premium = saw_abroad = False
+score = hops = 0
+saw_target = saw_premium = False
 for ln in open(raw, encoding="utf-8", errors="replace"):
     p = ln.strip().split("|")
     if len(p) < 2 or p[1] in {"*", ""}:
         continue
+    hops += 1
     if p[1] == target:
         saw_target = True
     asn = p[4].lstrip("ASas") if len(p) > 4 else ""
     if asn in premium:
         saw_premium = True
-    country = p[5] if len(p) > 5 else ""
-    where = " ".join(p[5:8]) if len(p) > 7 else country
-    priv = p[1].startswith(("10.", "192.168.", "172.", "100."))
-    if country and ("中国" not in country) and country.upper() not in {"CN", "CHINA", ""} and not priv:
-        saw_abroad = True
-    if where and "中国" not in where and not priv:
-        if any(x in where for x in ("德国", "美国", "英国", "日本", "香港", "韩国", "法国", "荷兰", "新加坡", "加拿大")):
-            saw_abroad = True
-sys.exit(0 if (saw_target or saw_premium or saw_abroad) else 1)
+if saw_target:
+    score += 1000
+if saw_premium:
+    score += 50
+score += hops
+print(score)
 PY
 }
 
@@ -187,6 +194,7 @@ AS_MAP = {
     "24940": "Hetzner", "25820": "IT7", "45102": "Alibaba", "132203": "Tencent",
     "13335": "CF", "16509": "Amazon", "15169": "Google", "8075": "MS",
     "51847": "Nearoute", "60068": "Datacamp", "23961": "Misaka",
+    "54801": "Zillion",
 }
 
 LINE_DB = [
@@ -302,9 +310,12 @@ for ln in lines:
     if geo != "*":
         geo = f"* {geo}"
     if is_private(ip):
-        geo = "* RFC1918"
+        # 已出现公网跳之后的 10/172 多为运营商隧道，不是家用局域网
+        saw_pub = any(not is_private(x["ip"]) for x in raw_hops)
+        geo = "* 运营商内网" if saw_pub else "* RFC1918"
         owner = ""
-        asn = ""
+        if not saw_pub:
+            asn = ""
     # 国内 ASN 补运营商后缀（对齐回程观感）
     isp_suffix = ""
     if asn in {"4134", "4809", "23764"}:
@@ -532,12 +543,17 @@ main() {
   local out="$WORKDIR/out.txt"
   local err="$WORKDIR/err.txt"
   local raw="$WORKDIR/raw.txt"
+  local best="$WORKDIR/best.txt"
   local combined="$WORKDIR/combined.txt"
-  local modes=(tcp icmp tcp)
+  # 多数 VPS 对 TCP/443 traceroute 中途黑洞，ICMP 更能打到终点（如本次新加坡）
+  local modes=(icmp tcp icmp)
   local attempt
   local ok=0
-  local used_mode="tcp"
+  local used_mode="icmp"
+  local best_score=-1
+  local score=0
 
+  : >"$best"
   for attempt in 1 2 3; do
     local mode="${modes[$((attempt - 1))]}"
     echo -e "${C_CYAN}第 ${attempt}/3 次探测（${mode}）…${C_RESET}"
@@ -550,27 +566,34 @@ main() {
       echo -e "${C_YELLOW}本次无有效跳数，准备重试…${C_RESET}"
       continue
     fi
-    used_mode="$mode"
-    if path_complete_enough "$raw" "$TARGET"; then
+    score=$(score_raw_path "$raw" "$TARGET")
+    if ((score > best_score)); then
+      best_score=$score
+      used_mode="$mode"
+      cp "$raw" "$best"
+    fi
+    if path_reached_target "$raw" "$TARGET"; then
       ok=1
+      echo -e "${C_GREEN}已到达目标（${mode}）${C_RESET}"
       break
     fi
-    echo -e "${C_YELLOW}路径不完整（国际段可能超时），自动重试…${C_RESET}"
+    echo -e "${C_YELLOW}尚未到达目标，自动换协议重试…${C_RESET}"
     echo
   done
 
-  if [[ ! -s "$raw" ]]; then
+  if [[ ! -s "$best" ]]; then
     echo -e "${C_RED}没有解析到路由数据。${C_RESET}" >&2
     echo -e "${C_YELLOW}--- nexttrace 输出 ---${C_RESET}" >&2
     cat "$combined" >&2 || true
     echo -e "${C_YELLOW}----------------------${C_RESET}" >&2
-    echo -e "${C_DIM}可手动验证：sudo nexttrace -T -p 443 -g cn --raw --pow-provider sakura -q 3 ${TARGET}${C_RESET}" >&2
+    echo -e "${C_DIM}可手动验证：sudo nexttrace -4 -g cn --pow-provider sakura -q 3 -m 30 ${TARGET}${C_RESET}" >&2
     exit 1
   fi
+  cp "$best" "$raw"
 
   local incomplete=0
   if [[ "$ok" -ne 1 ]]; then
-    echo -e "${C_YELLOW}已重试仍不完整，下面给出目前抓到的结果（仅供参考）。${C_RESET}"
+    echo -e "${C_YELLOW}已重试仍未到达目标，下面给出目前最完整的一条（仅供参考）。${C_RESET}"
     incomplete=1
   fi
 

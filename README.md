@@ -20,7 +20,7 @@
 bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/forward2.sh) 1.2.3.4
 ```
 
-版本号：`v2026-08-01-fwd2`。自动 TCP/ICMP 重试；需要 `sudo` + `python3` + NextTrace。
+版本号：`v2026-08-01-fwd3`。默认 ICMP 优先（许多 VPS 对 TCP traceroute 中途黑洞），未到终点再试 TCP；需要 `sudo` + `python3` + NextTrace。
 
 ### 摘要版（`forward.sh`）
 
