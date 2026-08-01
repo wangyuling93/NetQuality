@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-prog1"
+script_version="v2026-08-01-prog2"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -1765,13 +1765,13 @@ show_route(){
 echo -ne "\r${sroute[title]}\n"
 if [[ $mode_route -eq 0 ]];then
 echo -ne "\r$Font_Cyan北京TCP：$Font_Green电信 $Font_Suffix${routww[1]}$Font_Green->$Font_Suffix${routcn[1]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[3]}$Font_Green->$Font_Suffix${routcn[3]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[5]}$Font_Green->$Font_Suffix${routcn[5]}\n"
-echo -ne "\r$Font_Cyan北京UDP：$Font_Green电信 $Font_Suffix${routww[2]}$Font_Green->$Font_Suffix${routcn[2]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[4]}$Font_Green->$Font_Suffix${routcn[4]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[6]}$Font_Green->$Font_Suffix${routcn[6]}\n"
+echo -ne "\r$Font_Cyan北京UDP：$Font_Green电信 $Font_Suffix${routww[2]}$Font_Green->$Font_Suffix${routcn[2]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[4]}$Font_Green->$Font_Suffix${routcn[4]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[6]}$Font_Green->$Font_Suffix${routcn[6]}\n\n"
 echo -ne "\r$Font_Cyan上海TCP：$Font_Green电信 $Font_Suffix${routww[7]}$Font_Green->$Font_Suffix${routcn[7]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[9]}$Font_Green->$Font_Suffix${routcn[9]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[11]}$Font_Green->$Font_Suffix${routcn[11]}\n"
-echo -ne "\r$Font_Cyan上海UDP：$Font_Green电信 $Font_Suffix${routww[8]}$Font_Green->$Font_Suffix${routcn[8]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[10]}$Font_Green->$Font_Suffix${routcn[10]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[12]}$Font_Green->$Font_Suffix${routcn[12]}\n"
+echo -ne "\r$Font_Cyan上海UDP：$Font_Green电信 $Font_Suffix${routww[8]}$Font_Green->$Font_Suffix${routcn[8]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[10]}$Font_Green->$Font_Suffix${routcn[10]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[12]}$Font_Green->$Font_Suffix${routcn[12]}\n\n"
 echo -ne "\r$Font_Cyan广州TCP：$Font_Green电信 $Font_Suffix${routww[13]}$Font_Green->$Font_Suffix${routcn[13]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[15]}$Font_Green->$Font_Suffix${routcn[15]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[17]}$Font_Green->$Font_Suffix${routcn[17]}\n"
-echo -ne "\r$Font_Cyan广州UDP：$Font_Green电信 $Font_Suffix${routww[14]}$Font_Green->$Font_Suffix${routcn[14]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[16]}$Font_Green->$Font_Suffix${routcn[16]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[18]}$Font_Green->$Font_Suffix${routcn[18]}\n"
+echo -ne "\r$Font_Cyan广州UDP：$Font_Green电信 $Font_Suffix${routww[14]}$Font_Green->$Font_Suffix${routcn[14]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[16]}$Font_Green->$Font_Suffix${routcn[16]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[18]}$Font_Green->$Font_Suffix${routcn[18]}\n\n"
 echo -ne "\r$Font_Cyan湖南TCP：$Font_Green电信 $Font_Suffix${routww[19]}$Font_Green->$Font_Suffix${routcn[19]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[21]}$Font_Green->$Font_Suffix${routcn[21]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[23]}$Font_Green->$Font_Suffix${routcn[23]}\n"
-echo -ne "\r$Font_Cyan湖南UDP：$Font_Green电信 $Font_Suffix${routww[20]}$Font_Green->$Font_Suffix${routcn[20]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[22]}$Font_Green->$Font_Suffix${routcn[22]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[24]}$Font_Green->$Font_Suffix${routcn[24]}\n"
+echo -ne "\r$Font_Cyan湖南UDP：$Font_Green电信 $Font_Suffix${routww[20]}$Font_Green->$Font_Suffix${routcn[20]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[22]}$Font_Green->$Font_Suffix${routcn[22]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[24]}$Font_Green->$Font_Suffix${routcn[24]}\n\n"
 echo -ne "\r$Font_Cyan江西TCP：$Font_Green电信 $Font_Suffix${routww[25]}$Font_Green->$Font_Suffix${routcn[25]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[27]}$Font_Green->$Font_Suffix${routcn[27]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[29]}$Font_Green->$Font_Suffix${routcn[29]}\n"
 echo -ne "\r$Font_Cyan江西UDP：$Font_Green电信 $Font_Suffix${routww[26]}$Font_Green->$Font_Suffix${routcn[26]} || $Font_Green联通$Font_Suffix $Font_Suffix${routww[28]}$Font_Green->$Font_Suffix${routcn[28]} || $Font_Green移动$Font_Suffix $Font_Suffix${routww[30]}$Font_Green->$Font_Suffix${routcn[30]}\n"
 else
@@ -1840,6 +1840,8 @@ echo -ne "\r$Font_B$(printf '%2s' "$j")$mergejump$Font_Suffix $tmpdelay  $(print
 fi
 fi
 done
+# 每个城市（电信/联通/移动）结束后空一行
+((i%3==0 && i<rmtestnum))&&echo -ne "\n"
 done
 fi
 }
