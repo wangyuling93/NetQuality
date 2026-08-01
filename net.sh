@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route2"
+script_version="v2026-08-01-deps1"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -393,26 +393,71 @@ local is_dep=1
 local is_nexttrace=1
 local is_speedtest=1
 local is_stun=1
+local need_img=0
+local need_mtr=0
+local need_iperf=0
+local need_stun=0
+local need_nexttrace=0
+local need_speedtest=0
+local missing=""
+# 按 -S 跳过章节只检查真正用到的依赖，避免回程-only 仍反复装 imagemagick/stun/speedtest
+[[ $mode_skip != *"1"* ]]&&need_img=1
+[[ $mode_skip != *"2"* ]]&&need_stun=1
+[[ $mode_skip != *"4"* || $mode_skip != *"5"* ]]&&need_mtr=1
+[[ $mode_skip != *"5"* ]]&&need_nexttrace=1
+[[ $mode_skip != *"6"* ]]&&need_speedtest=1
+[[ $mode_skip != *"7"* ]]&&need_iperf=1
 if [ "$(uname)" == "Darwin" ]||[ $(id -u) -eq 0 ];then
 usesudo=""
 fi
-if ! jq --version >/dev/null 2>&1||! curl --version >/dev/null 2>&1||! command -v convert >/dev/null 2>&1||! command -v mtr >/dev/null 2>&1||! command -v iperf3 >/dev/null 2>&1||(! command -v stun >/dev/null 2>&1&&command -v apt >/dev/null 2>&1)||(! command -v free >/dev/null 2>&1&&[[ "$(uname)" != "Darwin" ]]);then
+if ! jq --version >/dev/null 2>&1;then
 is_dep=0
+missing+=" jq"
 fi
-if ! command -v nexttrace >/dev/null 2>&1;then
+if ! curl --version >/dev/null 2>&1;then
+is_dep=0
+missing+=" curl"
+fi
+if ! command -v bc >/dev/null 2>&1;then
+is_dep=0
+missing+=" bc"
+fi
+if [[ "$(uname)" != "Darwin" ]]&&! command -v free >/dev/null 2>&1;then
+is_dep=0
+missing+=" procps"
+fi
+if [[ $need_img -eq 1 ]]&&! command -v convert >/dev/null 2>&1;then
+is_dep=0
+missing+=" imagemagick"
+fi
+if [[ $need_mtr -eq 1 ]]&&! command -v mtr >/dev/null 2>&1;then
+is_dep=0
+missing+=" mtr"
+fi
+if [[ $need_iperf -eq 1 ]]&&! command -v iperf3 >/dev/null 2>&1;then
+is_dep=0
+missing+=" iperf3"
+fi
+# Debian/Ubuntu 包名是 stun-client；旧脚本装 stun 常装不上客户端，导致每次都提示
+if [[ $need_stun -eq 1 ]]&&! command -v stun >/dev/null 2>&1;then
+is_stun=0
+if command -v apt >/dev/null 2>&1;then
+is_dep=0
+missing+=" stun-client"
+fi
+fi
+if [[ $need_nexttrace -eq 1 ]]&&! command -v nexttrace >/dev/null 2>&1;then
 is_nexttrace=0
 fi
-if ! command -v speedtest >/dev/null 2>&1;then
+if [[ $need_speedtest -eq 1 ]]&&! command -v speedtest >/dev/null 2>&1;then
 is_speedtest=0
 fi
-if ! command -v stun >/dev/null 2>&1&&(command -v apk >/dev/null 2>&1||command -v dnf >/dev/null 2>&1||command -v yum >/dev/null 2>&1||command -v zypper >/dev/null 2>&1||command -v xbps-install >/dev/null 2>&1||command -v pacman >/dev/null 2>&1);then
-is_stun=0
-fi
-if [[ $is_dep -eq 0 || $is_nexttrace -eq 0 || $is_speedtest -eq 0 ]];then
+if [[ $is_dep -eq 0 || $is_nexttrace -eq 0 || $is_speedtest -eq 0 || $is_stun -eq 0 ]];then
 echo -e "Lacking necessary dependencies."
-[[ $is_dep -eq 0 ]]&&echo -e "Packages $Font_I${Font_Cyan}jq curl imagemagick mtr iperf3 stun bc$Font_Suffix will be installed using package manager$Font_Suffix."
+[[ $is_dep -eq 0 ]]&&echo -e "Missing:$Font_I${Font_Cyan}$missing$Font_Suffix (via package manager)."
 [[ $is_nexttrace -eq 0 ]]&&echo -e "Application $Font_I${Font_Cyan}nexttrace$Font_Suffix will be installed via $Font_Green${Font_I}curl nxtrace.org/nt |bash$Font_Suffix by ${Font_U}https://www.nxtrace.org/$Font_Suffix official."
 [[ $is_speedtest -eq 0 ]]&&echo -e "Application $Font_I${Font_Cyan}speedtest$Font_Suffix will be installed using ${Font_B}Speedtest.net$Font_Suffix official installation method ${Font_U}https://www.speedtest.net/apps/cli$Font_Suffix."
+[[ $is_stun -eq 0 && $is_dep -eq 1 ]]&&echo -e "Application $Font_I${Font_Cyan}stun$Font_Suffix will be installed from project binary."
 if [[ $mode_yes -eq 0 ]];then
 prompt=$(printf "Continue? (${Font_Green}y$Font_Suffix/${Font_Red}n$Font_Suffix): ")
 read -p "$prompt" choice
@@ -477,7 +522,8 @@ fi
 if [[ $is_speedtest -eq 0 ]];then
 install_speedtest
 fi
-if [[ $is_stun -eq 0 ]];then
+# apt 装 stun-client 失败时，或非 apt 系统，回退到项目自带二进制
+if [[ $need_stun -eq 1 ]]&&! command -v stun >/dev/null 2>&1;then
 install_stun
 fi
 fi
@@ -487,7 +533,8 @@ local package_manager=$1
 local install_command=$2
 case $package_manager in
 apt)$usesudo apt update
-$usesudo $install_command jq curl imagemagick mtr-tiny iperf3 stun bc procps
+# stun-client 才提供 stun 命令；包名 stun 在 Debian/Ubuntu 上不会装好客户端
+$usesudo $install_command jq curl imagemagick mtr-tiny iperf3 stun-client bc procps
 ;;
 dnf)$usesudo $install_command epel-release
 $usesudo $package_manager makecache
