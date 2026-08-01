@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route7"
+script_version="v2026-08-01-route8"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -92,10 +92,11 @@ declare -A rmcnhop
 declare -A rmcn
 declare -A rmww
 declare rmgia=0
-# 赣州地市探针（江西省网 CDN 之外另测，显示在江西下方）
+# 赣州地市探针（ip138 归属：赣州电信/联通/移动；勿用省网南昌或外省误标地址）
+# 旧误标：联通 116.255.128.98=河南郑州；移动 211.138.91.1=内蒙古；220.248.192.12/211.141.90.68=南昌省网
 declare gz_ct_ip="218.87.136.7"
-declare gz_cu_ip="116.255.128.98"
-declare gz_cm_ip="211.138.91.1"
+declare gz_cu_ip="113.195.64.68"
+declare gz_cm_ip="211.141.80.68"
 declare IPV4
 declare IPV6
 declare IPV4check=1
