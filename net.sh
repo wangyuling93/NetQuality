@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-hnjx2"
+script_version="v2026-08-01-route2"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -1292,12 +1292,15 @@ local rmode="$2"
 local rnum="$3"
 local ipv="$4"
 local response
-local max_retries=10
-local retry_delay=5
+# --raw 输出没有 "traceroute to" 字样；旧逻辑会误判失败并重试 10 次，表现为卡在 ~20%
+local max_retries=2
+local retry_delay=2
 local retry_count=0
 while [[ $retry_count -lt $max_retries ]];do
-response=$(timeout -s SIGKILL 50 nexttrace -p 80 -q 8 -"$ipv" --"$rmode" --raw --psize 1400 "$domain" 2>/dev/null)
-[[ $response != *"*please try again later*"* && $response == *"traceroute to"* ]]&&break
+response=$(timeout -s SIGKILL 35 nexttrace -p 80 -q 3 -"$ipv" --"$rmode" --raw --psize 1400 "$domain" 2>/dev/null)
+if [[ $response != *"*please try again later*"* ]]&&[[ -n $response ]]&&{ [[ $response == *"|"* ]]||[[ $response == *"traceroute to"* ]];};then
+break
+fi
 retry_count=$((retry_count+1))
 [[ $retry_count -lt $max_retries ]]&&sleep "$retry_delay"
 done
@@ -1582,12 +1585,14 @@ rdomain[12]="hn-cm-v$ipv.ip.zstaticcdn.com"
 rdomain[13]="jx-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[14]="jx-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[15]="jx-cm-v$ipv.ip.zstaticcdn.com"
-local max_threads=18
+local max_threads=8
 local available_memory=1024
 [[ "$(uname)" != "Darwin" ]]&&available_memory=$(free -m|awk '/Mem:/ {print $7}')
-local max_threads_by_memory=$(echo "$available_memory / 28"|bc)
+local max_threads_by_memory=$(echo "$available_memory / 40"|bc)
+((max_threads_by_memory<1))&&max_threads_by_memory=1
 ((max_threads_by_memory<max_threads))&&max_threads=$max_threads_by_memory
 local current_threads=0
+local pids=()
 local tmpresult=$(for i in $(seq 1 30)
 do
 local protocol="tcp"
@@ -1597,12 +1602,18 @@ mtr_test "${rdomain[$(((i+1)/2))]}" "$protocol" "$i" "$ipv"&
 else
 nexttrace_test "${rdomain[$(((i+1)/2))]}" "$protocol" "$i" "$ipv"&
 fi
+pids+=($!)
 ((current_threads++))
 if ((current_threads>=max_threads));then
-wait -n
+if wait -n 2>/dev/null;then
+:
+else
+wait "${pids[0]}" 2>/dev/null||true
+pids=("${pids[@]:1}")
+fi
 ((current_threads--))
 else
-sleep 2
+sleep 1
 fi
 done
 wait)
