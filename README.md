@@ -20,7 +20,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/f
 bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/forward.sh) 1.2.3.4
 ```
 
-标题里带 **去程检测 v3** 才是新版；旧版会重复打印同一跳 3 行。
+标题里带 **去程检测 v4** 才是新版。v4 会自动重试不完整路径，并把尾部连续超时收掉。
 
 会安装/调用 NextTrace，输出线路判定（CN2 / CMIN2 / 9929 等）+ 清晰跳数表。需要 sudo。
 

@@ -64,11 +64,11 @@ run_trace() {
   local out="$2"
   local err="$3"
   local mode="$4" # tcp|icmp
-  # -q 1：每跳只测 1 次，避免同跳重复三行
-  local -a args=(-q 1 -g cn --raw -m 30)
+  # -q 3：国际链路易丢包，多测几次再合并显示；拉长单跳超时
+  local -a args=(-q 3 -g cn --raw -m 20 --timeout 3000 --parallel-requests 1)
 
   if [[ "$mode" == "tcp" ]]; then
-    args+=(-T -p 80 --psize 1400)
+    args+=(-T -p 443 --psize 64)
   fi
   if [[ "$ip" == *:* ]]; then
     args+=(-6)
@@ -79,11 +79,41 @@ run_trace() {
 
   echo -e "${C_DIM}模式：${mode}；需要 root 权限（可能提示输入密码）…${C_RESET}"
   if command -v sudo >/dev/null 2>&1 && [[ "$(id -u)" -ne 0 ]]; then
-    # 从 /dev/tty 读密码，避免经 curl|bash 时 sudo 无法交互
     sudo nexttrace "${args[@]}" >"$out" 2>"$err" </dev/tty
   else
     nexttrace "${args[@]}" >"$out" 2>"$err"
   fi
+}
+
+# 路径是否足够完整：到达目标，或已看到精品网/境外 ASN
+path_complete_enough() {
+  local raw="$1"
+  local ip="$2"
+  python3 - "$raw" "$ip" <<'PY'
+import sys
+raw, target = sys.argv[1], sys.argv[2]
+premium = {"58807", "9929", "10099", "4809", "23764"}
+saw_target = saw_premium = saw_abroad = False
+for ln in open(raw, encoding="utf-8", errors="replace"):
+    p = ln.strip().split("|")
+    if len(p) < 2 or p[1] in {"*", ""}:
+        continue
+    if p[1] == target:
+        saw_target = True
+    asn = p[4].lstrip("ASas") if len(p) > 4 else ""
+    if asn in premium:
+        saw_premium = True
+    country = p[5] if len(p) > 5 else ""
+    where = " ".join(p[5:8]) if len(p) > 7 else country
+    if country and ("中国" not in country) and country.upper() not in {"CN", "CHINA", ""}:
+        # 排除空；RFC1918 一般 country 为空
+        if not p[1].startswith(("10.", "192.168.", "172.")):
+            saw_abroad = True
+    if "中国" not in where and where and not p[1].startswith(("10.", "192.168.", "172.")):
+        if any(x in where for x in ("德国", "美国", "英国", "日本", "香港", "韩国", "法国", "荷兰", "新加坡")):
+            saw_abroad = True
+sys.exit(0 if (saw_target or saw_premium or saw_abroad) else 1)
+PY
 }
 
 extract_raw() {
@@ -234,10 +264,21 @@ if not domestic_asn and cn_asns:
 exit_name, exit_q, exit_color = asn_name(exit_asn)
 dom_name, dom_q, dom_color = asn_name(domestic_asn)
 
-# 总判定：以国际出境为准
+# 是否到达目标 / 是否看到境外
+reached = any(h["ip"] == target for h in hops)
+saw_abroad = any(
+    h["ip"] != "*" and h.get("asn") and not is_china(h)
+    and not h["ip"].startswith(("10.", "192.168.", "172."))
+    for h in hops
+)
+incomplete = not reached and not saw_abroad
+
+# 总判定：以国际出境为准；不完整时不要误判成「普通线路」
 name, quality, color = exit_name, exit_q + "线路", exit_color
 if not exit_asn:
     name, quality, color = "未知", "路径不可见或探测失败", "red"
+elif incomplete:
+    name, quality, color = "探测不完整", "未出国/未达目标，结果不可靠", "red"
 
 color_map = {"green": "\033[32m", "yellow": "\033[33m", "red": "\033[31m"}
 c = color_map[color]
@@ -260,15 +301,31 @@ for h in hops:
     else:
         segments.append([hop_n, hop_n, h["asn"], ln, lq])
 
+# 截掉尾部连续超时（避免 10~30 全是 *）
+trim = len(hops)
+streak = 0
+for i in range(len(hops) - 1, -1, -1):
+    if hops[i]["ip"] == "*":
+        streak += 1
+        if streak >= 2:
+            trim = i
+    else:
+        break
+if streak >= 2:
+    hops = hops[:trim]
+
 print()
-print(f"{bold}{cyan}======== 去程检测摘要 v3（本机 → {target}）========{reset}")
+print(f"{bold}{cyan}======== 去程检测摘要 v4（本机 → {target}）========{reset}")
+if incomplete:
+    print(f"{bold}{color_map['red']}状态：探测不完整（国际段超时，请重试）{reset}")
+else:
+    print(f"{bold}状态：{color_map['green']}完整{reset}" + (f"  已到达目标" if reached else f"  已看到出境段"))
 print(f"{bold}国际出境：{c}{name} [{quality}]{reset}  {dim}← 看这个判断出国是否精品网{reset}")
 if domestic_asn:
     print(f"{bold}国内接入：{dc}{dom_name} [{dom_q}线路]{reset}  AS{domestic_asn}")
 else:
     print(f"{bold}国内接入：{dim}未识别到国内公网 ASN{reset}")
 
-# 明确标出优质/普通分别是哪几跳
 prem_segs = [s for s in segments if s[4] == "优质"]
 norm_segs = [s for s in segments if s[4] == "普通"]
 if prem_segs:
@@ -277,6 +334,8 @@ if prem_segs:
 if norm_segs:
     bits = [f"第{a}-{b}跳 {n}(AS{asn})" if a != b else f"第{a}跳 {n}(AS{asn})" for a,b,asn,n,_ in norm_segs]
     print(f"{bold}{color_map['yellow']}普通段：{'；'.join(bits)}{reset}")
+if incomplete and not prem_segs:
+    print(f"{color_map['yellow']}提示：本次没抓到出境跳（CMIN2/CN2 等），不能据此判断是普通线。{reset}")
 
 exit_hop = next((h for h in hops if h.get("asn") == exit_asn and h["ip"] != "*"), None)
 if exit_hop and not is_china(exit_hop):
@@ -337,7 +396,7 @@ PY
 }
 
 main() {
-  echo -e "${C_BOLD}${C_CYAN}去程检测 v3（macOS / Linux）${C_RESET}"
+  echo -e "${C_BOLD}${C_CYAN}去程检测 v4（macOS / Linux）${C_RESET}"
   echo -e "${C_DIM}仓库：https://github.com/wangyuling93/NetQuality${C_RESET}"
   echo
   warn_proxy
@@ -353,32 +412,41 @@ main() {
   local err="$WORKDIR/err.txt"
   local raw="$WORKDIR/raw.txt"
   local combined="$WORKDIR/combined.txt"
+  local modes=(tcp icmp tcp)
+  local attempt
+  local ok=0
 
-  # 先 TCP:80（和回程脚本同类），失败再试 ICMP
-  set +e
-  run_trace "$TARGET" "$out" "$err" "tcp"
-  local rc=$?
-  set -e
-  cat "$out" "$err" >"$combined" 2>/dev/null || true
-  extract_raw "$combined" "$raw"
-
-  if [[ ! -s "$raw" ]]; then
-    echo -e "${C_YELLOW}TCP 模式无有效跳数，改试 ICMP …${C_RESET}"
+  for attempt in 1 2 3; do
+    local mode="${modes[$((attempt - 1))]}"
+    echo -e "${C_CYAN}第 ${attempt}/3 次探测（${mode}）…${C_RESET}"
     set +e
-    run_trace "$TARGET" "$out" "$err" "icmp"
-    rc=$?
+    run_trace "$TARGET" "$out" "$err" "$mode"
     set -e
     cat "$out" "$err" >"$combined" 2>/dev/null || true
     extract_raw "$combined" "$raw"
-  fi
+    if [[ ! -s "$raw" ]]; then
+      echo -e "${C_YELLOW}本次无有效跳数，准备重试…${C_RESET}"
+      continue
+    fi
+    if path_complete_enough "$raw" "$TARGET"; then
+      ok=1
+      break
+    fi
+    echo -e "${C_YELLOW}路径不完整（国际段可能超时），自动重试…${C_RESET}"
+    echo
+  done
 
   if [[ ! -s "$raw" ]]; then
     echo -e "${C_RED}没有解析到路由数据。${C_RESET}" >&2
     echo -e "${C_YELLOW}--- nexttrace 输出 ---${C_RESET}" >&2
     cat "$combined" >&2 || true
     echo -e "${C_YELLOW}----------------------${C_RESET}" >&2
-    echo -e "${C_DIM}可手动验证：sudo nexttrace -T -p 80 -g cn ${TARGET}${C_RESET}" >&2
+    echo -e "${C_DIM}可手动验证：sudo nexttrace -T -p 443 -g cn -q 3 ${TARGET}${C_RESET}" >&2
     exit 1
+  fi
+
+  if [[ "$ok" -ne 1 ]]; then
+    echo -e "${C_YELLOW}已重试仍不完整，下面给出目前抓到的结果（仅供参考）。${C_RESET}"
   fi
 
   classify "$raw"
