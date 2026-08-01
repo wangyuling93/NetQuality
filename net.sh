@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route6"
+script_version="v2026-08-01-route7"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -82,6 +82,7 @@ declare -A routcn
 declare rgia=0
 declare -A AS_MAPPING
 declare -A rmcode
+declare -A rmlabel
 declare -A rmresu
 declare rmtestnum
 declare -A rmallasn
@@ -91,6 +92,10 @@ declare -A rmcnhop
 declare -A rmcn
 declare -A rmww
 declare rmgia=0
+# 赣州地市探针（江西省网 CDN 之外另测，显示在江西下方）
+declare gz_ct_ip="218.87.136.7"
+declare gz_cu_ip="116.255.128.98"
+declare gz_cm_ip="211.138.91.1"
 declare IPV4
 declare IPV6
 declare IPV4check=1
@@ -1885,7 +1890,8 @@ tmpback="$Back_Green"
 tmpfont="$Font_Purple"
 tmpback="$Back_Purple"
 esac
-echo -ne "\r$tmpback$Font_White$Font_B  ${pname[${rmcode[$i]}]} $tmppv  $Font_Suffix$Back_White$tmpfont$Font_B  ${rmww[$ii]} -> ${rmcn[$ii]}  $Font_Suffix\n"
+local cityname="${rmlabel[$i]:-${pname[${rmcode[$i]}]}}"
+echo -ne "\r$tmpback$Font_White$Font_B  $cityname $tmppv  $Font_Suffix$Back_White$tmpfont$Font_B  ${rmww[$ii]} -> ${rmcn[$ii]}  $Font_Suffix\n"
 echo -ne "\r$Back_Blue$Font_White地理路径：${rmallgeo[$ii]}    自治系统路径：${rmallasn[$ii]} $Font_Suffix\n"
 local varb="${rmmaxhop[$ii]:-0}"
 varb=${varb#0}
@@ -2060,9 +2066,10 @@ trap "kill_progress_bar" RETURN
 local ipv=$1
 local rdomain
 rmresu=()
+rmlabel=()
 rmcode[0]=31
 if [[ -z $mode_route_pv ]];then
-rmtestnum=15
+rmtestnum=18
 rmcode[1]=11
 rmcode[2]=11
 rmcode[3]=11
@@ -2078,6 +2085,12 @@ rmcode[12]=43
 rmcode[13]=36
 rmcode[14]=36
 rmcode[15]=36
+rmcode[16]=36
+rmcode[17]=36
+rmcode[18]=36
+rmlabel[16]="赣州"
+rmlabel[17]="赣州"
+rmlabel[18]="赣州"
 rdomain[0]="sh-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[1]="bj-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[2]="bj-cu-v$ipv.ip.zstaticcdn.com"
@@ -2094,6 +2107,28 @@ rdomain[12]="hn-cm-v$ipv.ip.zstaticcdn.com"
 rdomain[13]="jx-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[14]="jx-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[15]="jx-cm-v$ipv.ip.zstaticcdn.com"
+rdomain[16]="$gz_ct_ip"
+rdomain[17]="$gz_cu_ip"
+rdomain[18]="$gz_cm_ip"
+elif [[ $mode_route_pv -eq 36 ]];then
+# 江西：省网三网 + 赣州地市三网（显示在下方）
+rmtestnum=6
+rmcode[1]="$mode_route_pv"
+rmcode[2]="$mode_route_pv"
+rmcode[3]="$mode_route_pv"
+rmcode[4]="$mode_route_pv"
+rmcode[5]="$mode_route_pv"
+rmcode[6]="$mode_route_pv"
+rmlabel[4]="赣州"
+rmlabel[5]="赣州"
+rmlabel[6]="赣州"
+rdomain[0]="sh-ct-v$ipv.ip.zstaticcdn.com"
+rdomain[1]="jx-ct-v$ipv.ip.zstaticcdn.com"
+rdomain[2]="jx-cu-v$ipv.ip.zstaticcdn.com"
+rdomain[3]="jx-cm-v$ipv.ip.zstaticcdn.com"
+rdomain[4]="$gz_ct_ip"
+rdomain[5]="$gz_cu_ip"
+rdomain[6]="$gz_cm_ip"
 else
 rmtestnum=3
 rmcode[1]="$mode_route_pv"
@@ -2138,8 +2173,19 @@ done
 pids=("${alive_pids[@]}")
 ((reaped==1))
 }
+local _isp=""
 for i in $(seq 0 $rmtestnum);do
+if [[ -n ${rmlabel[$i]} ]];then
+case $((i%3)) in
+1)_isp="${sroute[ct]:-电信}";;
+2)_isp="${sroute[cu]:-联通}";;
+0)_isp="${sroute[cm]:-移动}";;
+esac
+_isp="${_isp// /}"
+route_label="(${rmlabel[$i]} TCP $_isp)"
+else
 route_label=$(route_progress_label "${rdomain[$i]}" "TCP")
+fi
 while ((${#pids[@]}>=max_threads));do
 reap_route_mode_pids||sleep 0.15
 done
