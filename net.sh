@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-prog5"
+script_version="v2026-08-01-prog6"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -468,6 +468,23 @@ isp="${isp// /}"
 proto=$(echo "$proto"|tr 'a-z' 'A-Z')
 [[ -z $proto ]]&&proto="TCP"
 echo "($city $proto $isp)"
+}
+# 按「已完成项/总项」刷新进度；每一检测项（如北京 TCP 电信）计 1
+route_progress_paint(){
+local base="$1"
+local span="$2"
+local end="$3"
+local done="$4"
+local total="$5"
+local label="$6"
+local pct
+if ((total<=0));then
+pct=$end
+else
+pct=$((base+done*span/total))
+fi
+((done>=total))&&pct=$end
+set_progress_status "$pct" "${done}/${total} ${label}"
 }
 install_dependencies(){
 local is_dep=1
@@ -1723,60 +1740,60 @@ local available_memory=1024
 local max_threads_by_memory=$(echo "$available_memory / 40"|bc)
 ((max_threads_by_memory<1))&&max_threads_by_memory=1
 ((max_threads_by_memory<max_threads))&&max_threads=$max_threads_by_memory
-local current_threads=0
-local pids=()
 local route_total=30
+# 用函数包一层，按每个检测项完成 +1；标签与 pid 一一对应
+run_route_jobs(){
+local pids=()
+local -A route_pid_label=()
 local route_done=0
 local route_label=""
-local route_pct=0
-local tmpresult=$(for i in $(seq 1 30)
-do
-local protocol="tcp"
+local route_pid=""
+local i protocol ridx pid alive_pids lab reaped
+reap_route_pids(){
+alive_pids=()
+reaped=0
+for pid in "${pids[@]}";do
+if kill -0 "$pid" 2>/dev/null;then
+alive_pids+=("$pid")
+else
+wait "$pid" 2>/dev/null||true
+lab="${route_pid_label[$pid]}"
+unset "route_pid_label[$pid]"
+((route_done++))
+((route_done>route_total))&&route_done=$route_total
+route_progress_paint "$route_pct_base" "$route_pct_span" "$route_pct_end" "$route_done" "$route_total" "$lab"
+reaped=1
+fi
+done
+pids=("${alive_pids[@]}")
+((reaped==1))
+}
+for i in $(seq 1 30);do
+protocol="tcp"
 ((i%2==0))&&protocol="udp"
-local ridx=$(((i+1)/2))
+ridx=$(((i+1)/2))
 route_label=$(route_progress_label "${rdomain[$ridx]}" "$protocol")
-route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
-set_progress_status "$route_pct" "$route_label"
+while ((${#pids[@]}>=max_threads));do
+reap_route_pids||sleep 0.15
+done
+route_progress_paint "$route_pct_base" "$route_pct_span" "$route_pct_end" "$route_done" "$route_total" "$route_label"
 if [[ $protocol == "udp" && $ipv == "6" ]];then
 mtr_test "${rdomain[$ridx]}" "$protocol" "$i" "$ipv"&
 else
 nexttrace_test "${rdomain[$ridx]}" "$protocol" "$i" "$ipv"&
 fi
-pids+=($!)
-((current_threads++))
-if ((current_threads>=max_threads));then
-if wait -n 2>/dev/null;then
-:
-else
-wait "${pids[0]}" 2>/dev/null||true
-pids=("${pids[@]:1}")
-fi
-((current_threads--))
-((route_done++))
-route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
-set_progress_status "$route_pct" "$route_label"
-else
-sleep 1
-fi
+route_pid=$!
+pids+=("$route_pid")
+route_pid_label[$route_pid]="$route_label"
 done
-while ((route_done<route_total));do
-if wait -n 2>/dev/null;then
-((route_done++))
-elif ((${#pids[@]}>0));then
-wait "${pids[0]}" 2>/dev/null||true
-pids=("${pids[@]:1}")
-((route_done++))
-else
-wait 2>/dev/null||true
-break
-fi
-((route_done>route_total))&&route_done=$route_total
-route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
-set_progress_status "$route_pct" "$route_label"
+while ((${#pids[@]}>0));do
+reap_route_pids||sleep 0.15
 done
-set_progress_status "$route_pct_end" ""
+route_progress_paint "$route_pct_base" "$route_pct_span" "$route_pct_end" "$route_total" "$route_total" ""
 sleep 0.35
-)
+}
+local tmpresult
+tmpresult=$(run_route_jobs)
 ibar_step=$route_pct_end
 while IFS= read -r line;do
 [[ -z $line ]]&&continue
@@ -2092,43 +2109,52 @@ local available_memory=1024
 [[ "$(uname)" != "Darwin" ]]&&available_memory=$(free -m|awk '/Mem:/ {print $7}')
 local max_threads_by_memory=$(echo "$available_memory / 28"|bc)
 ((max_threads_by_memory<max_threads))&&max_threads=$max_threads_by_memory
-local current_threads=0
 local route_total=$((rmtestnum+1))
+run_route_mode_jobs(){
+local pids=()
+local -A route_pid_label=()
 local route_done=0
 local route_label=""
-local route_pct=0
-local tmpresult=$(for i in $(seq 0 $rmtestnum)
-do
-local protocol=1
-route_label=$(route_progress_label "${rdomain[$i]}" "TCP")
-route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
-set_progress_status "$route_pct" "$route_label"
-nexttrace_route "${rdomain[$i]}" "$protocol" "$i" "$ipv"&
-((current_threads++))
-if ((current_threads>=max_threads));then
-wait -n
-((current_threads--))
-((route_done++))
-route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
-set_progress_status "$route_pct" "$route_label"
+local route_pid=""
+local i pid alive_pids lab reaped
+reap_route_mode_pids(){
+alive_pids=()
+reaped=0
+for pid in "${pids[@]}";do
+if kill -0 "$pid" 2>/dev/null;then
+alive_pids+=("$pid")
 else
-sleep 2
-fi
-done
-while ((route_done<route_total));do
-if wait -n 2>/dev/null;then
+wait "$pid" 2>/dev/null||true
+lab="${route_pid_label[$pid]}"
+unset "route_pid_label[$pid]"
 ((route_done++))
-else
-wait 2>/dev/null||true
-break
-fi
 ((route_done>route_total))&&route_done=$route_total
-route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
-set_progress_status "$route_pct" "$route_label"
+route_progress_paint "$route_pct_base" "$route_pct_span" "$route_pct_end" "$route_done" "$route_total" "$lab"
+reaped=1
+fi
 done
-set_progress_status "$route_pct_end" ""
+pids=("${alive_pids[@]}")
+((reaped==1))
+}
+for i in $(seq 0 $rmtestnum);do
+route_label=$(route_progress_label "${rdomain[$i]}" "TCP")
+while ((${#pids[@]}>=max_threads));do
+reap_route_mode_pids||sleep 0.15
+done
+route_progress_paint "$route_pct_base" "$route_pct_span" "$route_pct_end" "$route_done" "$route_total" "$route_label"
+nexttrace_route "${rdomain[$i]}" 1 "$i" "$ipv"&
+route_pid=$!
+pids+=("$route_pid")
+route_pid_label[$route_pid]="$route_label"
+done
+while ((${#pids[@]}>0));do
+reap_route_mode_pids||sleep 0.15
+done
+route_progress_paint "$route_pct_base" "$route_pct_span" "$route_pct_end" "$route_total" "$route_total" ""
 sleep 0.35
-)
+}
+local tmpresult
+tmpresult=$(run_route_mode_jobs)
 ibar_step=$route_pct_end
 rmmaxhop=()
 rmcnhop=()
