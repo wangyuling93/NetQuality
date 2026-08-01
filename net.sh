@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-prog6"
+script_version="v2026-08-01-route3"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -197,7 +197,7 @@ sinfo[delayww]="Checking Global TCP Delay"
 sinfo[ldelayww]=25
 shead[title]="NET QUALITY CHECK REPORT: "
 shead[ver]="Version: $script_version"
-shead[bash]="bash <(curl -sL https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -EN"
+shead[bash]="bash <(curl -sL https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -ERN"
 shead[git]="https://github.com/wangyuling93/NetQuality"
 shead[time_raw]=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 shead[time]="Report Time: ${shead[time_raw]}"
@@ -297,7 +297,7 @@ sinfo[delayww]="正在检测国际互连TCP大包延迟"
 sinfo[ldelayww]=27
 shead[title]="网络质量体检报告："
 shead[ver]="脚本版本：$script_version"
-shead[bash]="bash <(curl -sL https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -N"
+shead[bash]="bash <(curl -sL https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -R"
 shead[git]="https://github.com/wangyuling93/NetQuality"
 shead[time_raw]=$(TZ="Asia/Shanghai" date +"%Y-%m-%d %H:%M:%S CST")
 shead[time]="报告时间：${shead[time_raw]}"
@@ -2973,6 +2973,10 @@ exit 0
 fi
 [[ $mode_ping -eq 1 ]]&&mode_skip+="567"
 [[ $mode_low -eq 1 ]]&&mode_skip+="6"
+# 跳过延迟/测速/互连、只留回程时，自动用 -R 逐跳详情（与 NodeQuality/Check.Place -R 一致），避免 TCP/UDP 汇总表
+if [[ $mode_route -eq 0 && $mode_skip == *"4"* && $mode_skip == *"6"* && $mode_skip == *"7"* && $mode_skip != *"5"* ]];then
+mode_route=1
+fi
 [[ $mode_route -eq 1 ]]&&mode_skip+="467"
 [[ $mode_ping -eq 1 && $mode_skip == *"4"* ]]&&ERRORcode=9
 [[ $mode_route -eq 1 && $mode_skip == *"5"* ]]&&ERRORcode=9
