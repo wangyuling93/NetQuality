@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route3"
+script_version="v2026-08-01-route4"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -159,8 +159,9 @@ shelp_lines=(
 "            -L                             Low data mode                              低数据模式（跳过测速环节）"
 "            -M                             Run with Interactive Interface             交互界面方式运行"
 "            -P                             Ping mode                                  三网延迟模式"
-"            -R [Province]                  Route mode [Specify Province]              三网完整路由模式[可选指定省份]"
-"            -S 1234567                     Skip sections by number                    跳过相应章节")
+"            -R [Province]                  Detailed route [optional province]         回程详细逐跳模式[可选指定省份]"
+"            -S 1234567                     Skip sections by number                    跳过相应章节"
+"                                           例: -S 123467 回程汇总 | -R -S 123 回程详细")
 shelp=$(printf "%s\n" "${shelp_lines[@]}")
 set_language(){
 case "$YY" in
@@ -197,7 +198,7 @@ sinfo[delayww]="Checking Global TCP Delay"
 sinfo[ldelayww]=25
 shead[title]="NET QUALITY CHECK REPORT: "
 shead[ver]="Version: $script_version"
-shead[bash]="bash <(curl -sL https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -ERN"
+shead[bash]="bash <(curl -sL https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -ER"
 shead[git]="https://github.com/wangyuling93/NetQuality"
 shead[time_raw]=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 shead[time]="Report Time: ${shead[time_raw]}"
@@ -2973,10 +2974,7 @@ exit 0
 fi
 [[ $mode_ping -eq 1 ]]&&mode_skip+="567"
 [[ $mode_low -eq 1 ]]&&mode_skip+="6"
-# 跳过延迟/测速/互连、只留回程时，自动用 -R 逐跳详情（与 NodeQuality/Check.Place -R 一致），避免 TCP/UDP 汇总表
-if [[ $mode_route -eq 0 && $mode_skip == *"4"* && $mode_skip == *"6"* && $mode_skip == *"7"* && $mode_skip != *"5"* ]];then
-mode_route=1
-fi
+# -S 123467 = 回程汇总表；加 -R（如 -R -S 123 或 -S 123467 -R）= 逐跳详情
 [[ $mode_route -eq 1 ]]&&mode_skip+="467"
 [[ $mode_ping -eq 1 && $mode_skip == *"4"* ]]&&ERRORcode=9
 [[ $mode_route -eq 1 && $mode_skip == *"5"* ]]&&ERRORcode=9
