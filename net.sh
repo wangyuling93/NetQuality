@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-prog2"
+script_version="v2026-08-01-prog3"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -379,14 +379,28 @@ show_progress_bar_(){
 local bar="\u280B\u2819\u2839\u2838\u283C\u2834\u2826\u2827\u2807\u280F"
 local n=${#bar}
 local detail=""
+local pct=$ibar_step
+local pct_line=""
+local detail_line=""
 while sleep 0.1;do
 if ! kill -0 $main_pid 2>/dev/null;then
 echo -ne ""
 exit
 fi
+pct=$ibar_step
 detail=""
-[[ -n $progress_detail_file && -f $progress_detail_file ]]&&detail=$(tr -d '\n' <"$progress_detail_file" 2>/dev/null)
-echo -ne "\r$Font_LineClear\r$Font_Cyan$Font_B[$IP]# $1$Font_Cyan$Font_B$(printf '%*s' "$2" ''|tr ' ' '.') ${bar:ibar++*6%n:6} $(printf '%02d%%' $ibar_step)${detail:+ $Font_Yellow$detail}$Font_Suffix"
+# 进度条子进程读不到父进程变量，百分比/当前目标通过状态文件同步
+if [[ -n $progress_detail_file && -f $progress_detail_file ]];then
+pct_line=""
+detail_line=""
+{
+IFS= read -r pct_line||true
+IFS= read -r detail_line||true
+} <"$progress_detail_file" 2>/dev/null
+[[ $pct_line =~ ^[0-9]+$ ]]&&pct=$pct_line
+detail=$detail_line
+fi
+echo -ne "\r$Font_LineClear\r$Font_Cyan$Font_B[$IP]# $1$Font_Cyan$Font_B$(printf '%*s' "$2" ''|tr ' ' '.') ${bar:ibar++*6%n:6} $(printf '%02d%%' "$pct")${detail:+ $Font_Yellow$detail}$Font_Suffix"
 done
 }
 kill_progress_bar(){
@@ -394,9 +408,22 @@ kill "$bar_pid" 2>/dev/null&&echo -ne "\r$Font_LineClear\r"
 [[ -n $progress_detail_file ]]&&rm -f "$progress_detail_file" 2>/dev/null
 progress_detail_file=""
 }
-set_progress_detail(){
+# 写入进度百分比 + 当前探测目标（供进度条进程读取）
+set_progress_status(){
+local pct="$1"
+local detail="$2"
 [[ -n $progress_detail_file ]]||return 0
-printf '%s' "$1" >"$progress_detail_file" 2>/dev/null
+printf '%s\n%s\n' "$pct" "$detail" >"$progress_detail_file" 2>/dev/null
+}
+set_progress_detail(){
+# 兼容旧调用：只更新文案，尽量保留已有百分比
+local detail="$1"
+local pct=$ibar_step
+local pct_line=""
+[[ -n $progress_detail_file ]]||return 0
+[[ -f $progress_detail_file ]]&&IFS= read -r pct_line <"$progress_detail_file" 2>/dev/null
+[[ $pct_line =~ ^[0-9]+$ ]]&&pct=$pct_line
+set_progress_status "$pct" "$detail"
 }
 # 从探测域名生成进度文案，如 (北京 TCP 电信)
 route_progress_label(){
@@ -1678,12 +1705,18 @@ local max_threads_by_memory=$(echo "$available_memory / 40"|bc)
 ((max_threads_by_memory<max_threads))&&max_threads=$max_threads_by_memory
 local current_threads=0
 local pids=()
+local route_total=30
+local route_done=0
+local route_pct_base=20
+local route_pct_span=28
+local route_label=""
 local tmpresult=$(for i in $(seq 1 30)
 do
 local protocol="tcp"
 ((i%2==0))&&protocol="udp"
 local ridx=$(((i+1)/2))
-set_progress_detail "$(route_progress_label "${rdomain[$ridx]}" "$protocol")"
+route_label=$(route_progress_label "${rdomain[$ridx]}" "$protocol")
+set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
 if [[ $protocol == "udp" && $ipv == "6" ]];then
 mtr_test "${rdomain[$ridx]}" "$protocol" "$i" "$ipv"&
 else
@@ -1699,12 +1732,24 @@ wait "${pids[0]}" 2>/dev/null||true
 pids=("${pids[@]:1}")
 fi
 ((current_threads--))
+((route_done++))
+set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
 else
 sleep 1
 fi
 done
-wait
-set_progress_detail "")
+while ((route_done<route_total));do
+if wait -n 2>/dev/null;then
+((route_done++))
+else
+wait 2>/dev/null||true
+route_done=$route_total
+fi
+set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
+done
+set_progress_status "$((route_pct_base+route_pct_span))" ""
+)
+ibar_step=$((route_pct_base+route_pct_span))
 while IFS= read -r line;do
 [[ -z $line ]]&&continue
 read -r index rww_value rcn_value <<<"$line"
@@ -2017,21 +2062,39 @@ local available_memory=1024
 local max_threads_by_memory=$(echo "$available_memory / 28"|bc)
 ((max_threads_by_memory<max_threads))&&max_threads=$max_threads_by_memory
 local current_threads=0
+local route_total=$((rmtestnum+1))
+local route_done=0
+local route_pct_base=20
+local route_pct_span=28
+local route_label=""
 local tmpresult=$(for i in $(seq 0 $rmtestnum)
 do
 local protocol=1
-set_progress_detail "$(route_progress_label "${rdomain[$i]}" "TCP")"
+route_label=$(route_progress_label "${rdomain[$i]}" "TCP")
+set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
 nexttrace_route "${rdomain[$i]}" "$protocol" "$i" "$ipv"&
 ((current_threads++))
 if ((current_threads>=max_threads));then
 wait -n
 ((current_threads--))
+((route_done++))
+set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
 else
 sleep 2
 fi
 done
-wait
-set_progress_detail "")
+while ((route_done<route_total));do
+if wait -n 2>/dev/null;then
+((route_done++))
+else
+wait 2>/dev/null||true
+route_done=$route_total
+fi
+set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
+done
+set_progress_status "$((route_pct_base+route_pct_span))" ""
+)
+ibar_step=$((route_pct_base+route_pct_span))
 rmmaxhop=()
 rmcnhop=()
 rmallasn=()
