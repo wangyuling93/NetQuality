@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-prog3"
+script_version="v2026-08-01-prog4"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -424,6 +424,23 @@ local pct_line=""
 [[ -f $progress_detail_file ]]&&IFS= read -r pct_line <"$progress_detail_file" 2>/dev/null
 [[ $pct_line =~ ^[0-9]+$ ]]&&pct=$pct_line
 set_progress_status "$pct" "$detail"
+}
+# 按实际会跑的章节计算回程阶段进度窗口；仅测回程时应 0→100，而不是卡在 ~48%
+route_progress_window(){
+local base=20
+local end=48
+if [[ $mode_skip == *"1"* && $mode_skip == *"2"* && $mode_skip == *"3"* && $mode_skip == *"4"* ]];then
+base=0
+fi
+if [[ $mode_skip == *"6"* && $mode_skip == *"7"* ]];then
+end=100
+elif [[ $mode_skip == *"7"* ]];then
+end=90
+elif [[ $mode_skip == *"6"* ]];then
+end=70
+fi
+((end<=base))&&end=$((base+1))
+echo "$base $end"
 }
 # 从探测域名生成进度文案，如 (北京 TCP 电信)
 route_progress_label(){
@@ -1673,10 +1690,13 @@ fi
 echo "$rnum $tresuww $tresucn"
 }
 get_route(){
-ibar_step=19
+local route_pct_base route_pct_end route_pct_span
+read -r route_pct_base route_pct_end <<<"$(route_progress_window)"
+route_pct_span=$((route_pct_end-route_pct_base))
+ibar_step=$route_pct_base
 local temp_info="$Font_Cyan$Font_B${sinfo[route]}$Font_Suffix"
-((ibar_step+=1))
 progress_detail_file=$(mktemp 2>/dev/null||echo "/tmp/netquality_route_$$.status")
+set_progress_status "$route_pct_base" ""
 show_progress_bar "$temp_info" $((50-${sinfo[lroute]}))&
 bar_pid="$!"&&disown "$bar_pid"
 trap "kill_progress_bar" RETURN
@@ -1707,16 +1727,16 @@ local current_threads=0
 local pids=()
 local route_total=30
 local route_done=0
-local route_pct_base=20
-local route_pct_span=28
 local route_label=""
+local route_pct=0
 local tmpresult=$(for i in $(seq 1 30)
 do
 local protocol="tcp"
 ((i%2==0))&&protocol="udp"
 local ridx=$(((i+1)/2))
 route_label=$(route_progress_label "${rdomain[$ridx]}" "$protocol")
-set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
+route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
+set_progress_status "$route_pct" "$route_label"
 if [[ $protocol == "udp" && $ipv == "6" ]];then
 mtr_test "${rdomain[$ridx]}" "$protocol" "$i" "$ipv"&
 else
@@ -1733,7 +1753,8 @@ pids=("${pids[@]:1}")
 fi
 ((current_threads--))
 ((route_done++))
-set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
+route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
+set_progress_status "$route_pct" "$route_label"
 else
 sleep 1
 fi
@@ -1741,15 +1762,22 @@ done
 while ((route_done<route_total));do
 if wait -n 2>/dev/null;then
 ((route_done++))
+elif ((${#pids[@]}>0));then
+wait "${pids[0]}" 2>/dev/null||true
+pids=("${pids[@]:1}")
+((route_done++))
 else
 wait 2>/dev/null||true
-route_done=$route_total
+break
 fi
-set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
+((route_done>route_total))&&route_done=$route_total
+route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
+set_progress_status "$route_pct" "$route_label"
 done
-set_progress_status "$((route_pct_base+route_pct_span))" ""
+set_progress_status "$route_pct_end" ""
+sleep 0.35
 )
-ibar_step=$((route_pct_base+route_pct_span))
+ibar_step=$route_pct_end
 while IFS= read -r line;do
 [[ -z $line ]]&&continue
 read -r index rww_value rcn_value <<<"$line"
@@ -2002,10 +2030,13 @@ echo "$output"|awk -v rnum="$rnum" '
     }'
 }
 get_route_mode(){
-ibar_step=19
+local route_pct_base route_pct_end route_pct_span
+read -r route_pct_base route_pct_end <<<"$(route_progress_window)"
+route_pct_span=$((route_pct_end-route_pct_base))
+ibar_step=$route_pct_base
 local temp_info="$Font_Cyan$Font_B${sinfo[moderoute]}$Font_Suffix"
-((ibar_step+=1))
 progress_detail_file=$(mktemp 2>/dev/null||echo "/tmp/netquality_route_$$.status")
+set_progress_status "$route_pct_base" ""
 show_progress_bar "$temp_info" $((50-${sinfo[lmoderoute]}))&
 bar_pid="$!"&&disown "$bar_pid"
 trap "kill_progress_bar" RETURN
@@ -2064,21 +2095,22 @@ local max_threads_by_memory=$(echo "$available_memory / 28"|bc)
 local current_threads=0
 local route_total=$((rmtestnum+1))
 local route_done=0
-local route_pct_base=20
-local route_pct_span=28
 local route_label=""
+local route_pct=0
 local tmpresult=$(for i in $(seq 0 $rmtestnum)
 do
 local protocol=1
 route_label=$(route_progress_label "${rdomain[$i]}" "TCP")
-set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
+route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
+set_progress_status "$route_pct" "$route_label"
 nexttrace_route "${rdomain[$i]}" "$protocol" "$i" "$ipv"&
 ((current_threads++))
 if ((current_threads>=max_threads));then
 wait -n
 ((current_threads--))
 ((route_done++))
-set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
+route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
+set_progress_status "$route_pct" "$route_label"
 else
 sleep 2
 fi
@@ -2088,13 +2120,16 @@ if wait -n 2>/dev/null;then
 ((route_done++))
 else
 wait 2>/dev/null||true
-route_done=$route_total
+break
 fi
-set_progress_status "$((route_pct_base+route_done*route_pct_span/route_total))" "$route_label"
+((route_done>route_total))&&route_done=$route_total
+route_pct=$((route_pct_base+route_done*route_pct_span/route_total))
+set_progress_status "$route_pct" "$route_label"
 done
-set_progress_status "$((route_pct_base+route_pct_span))" ""
+set_progress_status "$route_pct_end" ""
+sleep 0.35
 )
-ibar_step=$((route_pct_base+route_pct_span))
+ibar_step=$route_pct_end
 rmmaxhop=()
 rmcnhop=()
 rmallasn=()
