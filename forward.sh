@@ -96,13 +96,14 @@ classify() {
   local raw_file="$1"
   TARGET_IP="$TARGET" RAW_FILE="$raw_file" python3 - <<'PY'
 import os, re, sys
+from collections import OrderedDict
 
 target = os.environ.get("TARGET_IP", "")
 path = os.environ["RAW_FILE"]
 with open(path, "r", encoding="utf-8", errors="replace") as f:
     lines = [ln.strip() for ln in f if ln.strip()]
 
-hops = []
+raw_hops = []
 for ln in lines:
     parts = ln.split("|")
     if len(parts) < 2:
@@ -110,76 +111,183 @@ for ln in lines:
     hop = parts[0]
     ip = parts[1] if len(parts) > 1 else "*"
     if ip == "*" or not ip:
-        hops.append({"hop": hop, "ip": "*", "rtt": "", "asn": "", "where": "", "owner": ""})
+        raw_hops.append({"hop": hop, "ip": "*", "rtt": None, "asn": "", "country": "", "where": "", "owner": ""})
         continue
-    host = parts[2] if len(parts) > 2 else ""
-    rtt = parts[3] if len(parts) > 3 else ""
+    try:
+        rtt = float(parts[3]) if len(parts) > 3 and parts[3] else None
+    except ValueError:
+        rtt = None
     asn = re.sub(r"^AS", "", parts[4] if len(parts) > 4 else "", flags=re.I)
     country = parts[5] if len(parts) > 5 else ""
     prov = parts[6] if len(parts) > 6 else ""
     city = parts[7] if len(parts) > 7 else ""
     owner = parts[9] if len(parts) > 9 else ""
     where = " ".join(x for x in (country, prov, city) if x)
-    hops.append({
-        "hop": hop, "ip": ip, "host": host, "rtt": rtt,
-        "asn": asn, "where": where, "owner": owner,
+    raw_hops.append({
+        "hop": hop, "ip": ip, "rtt": rtt, "asn": asn,
+        "country": country, "where": where, "owner": owner,
     })
 
-asns = [h["asn"] for h in hops if h.get("asn")]
-all_asn = " ".join(f"AS{a}" for a in asns)
+# 合并同一跳的多次探测：取出现最多的 IP，RTT 取平均
+grouped = OrderedDict()
+for h in raw_hops:
+    grouped.setdefault(h["hop"], []).append(h)
 
-def label():
-    if "AS58807" in all_asn:
-        return "移动CMIN2", "优质线路", "green"
-    if "AS9929" in all_asn:
-        return "联通9929", "优质线路", "green"
-    if "AS10099" in all_asn:
-        return "联通10099", "优质线路", "green"
-    if "AS4809" in all_asn and "AS4134" in all_asn:
-        return "电信CN2GT", "半程/普通偏优", "yellow"
-    if "AS4809" in all_asn:
-        return "电信CN2GIA", "优质线路", "green"
-    if "AS23764" in all_asn:
-        return "电信CTGGIA", "优质线路", "green"
-    if "AS9808" in all_asn or "AS58453" in all_asn:
-        return "移动CMI", "普通线路", "yellow"
-    if "AS4837" in all_asn:
-        return "联通4837", "普通线路", "yellow"
-    if "AS4134" in all_asn:
-        return "电信163", "普通线路", "yellow"
-    if asns:
-        return f"AS{asns[0]}", "未能识别精品网特征", "yellow"
-    return "未知", "路径不可见或探测失败", "red"
+hops = []
+for hop, items in grouped.items():
+    visible = [x for x in items if x["ip"] != "*"]
+    if not visible:
+        hops.append({"hop": hop, "ip": "*", "rtt": None, "asn": "", "country": "", "where": "", "owner": "", "loss": len(items)})
+        continue
+    # 多数表决 IP
+    counts = {}
+    for x in visible:
+        counts[x["ip"]] = counts.get(x["ip"], 0) + 1
+    best_ip = max(counts, key=counts.get)
+    chosen = [x for x in visible if x["ip"] == best_ip]
+    rtts = [x["rtt"] for x in chosen if x["rtt"] is not None]
+    sample = chosen[0]
+    hops.append({
+        "hop": hop,
+        "ip": best_ip,
+        "rtt": sum(rtts) / len(rtts) if rtts else None,
+        "asn": sample["asn"],
+        "country": sample["country"],
+        "where": sample["where"],
+        "owner": sample["owner"],
+        "loss": len(items) - len(visible),
+        "probes": len(items),
+    })
 
-name, quality, color = label()
+LINE_DB = [
+    ("58807", "移动CMIN2", "优质", "green", "国际"),
+    ("9929", "联通9929", "优质", "green", "国际"),
+    ("10099", "联通10099", "优质", "green", "国际"),
+    ("4809", "电信CN2", "优质", "green", "国际"),
+    ("23764", "电信CTGGIA", "优质", "green", "国际"),
+    ("9808", "移动CMI", "普通", "yellow", "国内/国际"),
+    ("58453", "移动CMI", "普通", "yellow", "国内/国际"),
+    ("4837", "联通4837", "普通", "yellow", "国内/国际"),
+    ("4134", "电信163", "普通", "yellow", "国内/国际"),
+]
+
+def asn_name(asn):
+    for code, name, quality, color, _ in LINE_DB:
+        if asn == code:
+            return name, quality, color
+    return (f"AS{asn}" if asn else "未知"), "未知", "yellow"
+
+def is_china(h):
+    c = h.get("country") or ""
+    w = h.get("where") or ""
+    return ("中国" in c) or ("中国" in w) or c.upper() in {"CN", "CHINA"}
+
+def is_cn_mainland_public(h):
+    # 国内公网跳（排除私网）
+    if h["ip"] == "*" or not h.get("asn"):
+        return False
+    if h["ip"].startswith(("10.", "192.168.", "172.")) or h["ip"].startswith("100."):
+        return False
+    return is_china(h)
+
+cn_hops = [h for h in hops if is_cn_mainland_public(h)]
+intl_hops = [h for h in hops if h["ip"] != "*" and h.get("asn") and not is_china(h) and not h["ip"].startswith(("10.", "192.168.", "172."))]
+
+cn_asns = []
+for h in cn_hops:
+    if h["asn"] and (not cn_asns or cn_asns[-1] != h["asn"]):
+        cn_asns.append(h["asn"])
+intl_asns = []
+for h in intl_hops:
+    if h["asn"] and (not intl_asns or intl_asns[-1] != h["asn"]):
+        intl_asns.append(h["asn"])
+
+# 国际出境线路：优先看出国后的 ASN，再看全程精品网特征
+exit_asn = ""
+for pref in ("58807", "9929", "10099", "4809", "23764"):
+    if pref in intl_asns or any(h.get("asn") == pref for h in hops):
+        # 若精品 ASN 出现在国外跳，或出现在路径中靠近出境处
+        if pref in intl_asns:
+            exit_asn = pref
+            break
+        # 精品 ASN 在国内最后几跳也算（有时 geo 仍标中国）
+        for h in reversed(hops):
+            if h.get("asn") == pref:
+                exit_asn = pref
+                break
+        if exit_asn:
+            break
+if not exit_asn and intl_asns:
+    exit_asn = intl_asns[0]
+if not exit_asn and cn_asns:
+    exit_asn = cn_asns[-1]
+
+domestic_asn = ""
+for pref in ("9808", "58453", "4837", "4134", "4809", "58807"):
+    if pref in cn_asns:
+        domestic_asn = pref
+        break
+if not domestic_asn and cn_asns:
+    domestic_asn = cn_asns[0]
+
+exit_name, exit_q, exit_color = asn_name(exit_asn)
+dom_name, dom_q, dom_color = asn_name(domestic_asn)
+
+# 总判定：以国际出境为准
+name, quality, color = exit_name, exit_q + "线路", exit_color
+if not exit_asn:
+    name, quality, color = "未知", "路径不可见或探测失败", "red"
+
 color_map = {"green": "\033[32m", "yellow": "\033[33m", "red": "\033[31m"}
 c = color_map[color]
+dc = color_map.get(dom_color, color_map["yellow"])
 bold, cyan, dim, reset, blue = "\033[1m", "\033[36m", "\033[2m", "\033[0m", "\033[34m"
+purple = "\033[35m"
 
 print()
 print(f"{bold}{cyan}======== 去程检测摘要（本机 → {target}）========{reset}")
-print(f"{bold}判定线路：{c}{name} [{quality}]{reset}")
+print(f"{bold}国际出境：{c}{name} [{quality}]{reset}  {dim}(决定出国段质量){reset}")
+if domestic_asn:
+    print(f"{bold}国内接入：{dc}{dom_name} [{dom_q}线路]{reset}  {dim}AS{domestic_asn}{reset}")
+else:
+    print(f"{bold}国内接入：{dim}未识别到国内公网 ASN{reset}")
+
+# 出国点提示
+exit_hop = next((h for h in hops if h.get("asn") == exit_asn and h["ip"] != "*"), None)
+if exit_hop and not is_china(exit_hop):
+    print(f"出境位置：{purple}{exit_hop['where'] or '境外'}{reset}  AS{exit_asn}  ~{exit_hop['rtt']:.0f}ms" if exit_hop["rtt"] is not None else f"出境位置：{purple}{exit_hop['where'] or '境外'}{reset}  AS{exit_asn}")
+elif exit_hop:
+    print(f"特征 ASN：AS{exit_asn} @ {exit_hop['where'] or exit_hop['ip']}")
+
 seen = []
-for a in asns:
-    if not seen or seen[-1] != a:
+for h in hops:
+    a = h.get("asn")
+    if a and (not seen or seen[-1] != a):
         seen.append(a)
-asn_path = " → ".join(f"AS{a}" for a in seen) if seen else "(无 ASN)"
+asn_path = " → ".join(f"AS{a}({asn_name(a)[0]})" for a in seen) if seen else "(无 ASN)"
 print(f"ASN 路径：{blue}{asn_path}{reset}")
-print(f"{dim}说明：去程看的是「你当前网络 → 机器」；测前请关闭 Shadowrocket 代理/TUN。{reset}")
+print(f"{dim}解读：国际出境=出国用的三网线路；CMIN2/CN2/9929=优质，CMI/163/4837=普通。{reset}")
 print()
-print(f"{bold}详细跳数：{reset}")
-print(f"{'跳':>3}  {'延迟':>8}  {'IP':<18} {'ASN':<10} 地理位置 / 归属")
-print("-" * 78)
+print(f"{bold}详细跳数（已合并多次探测）：{reset}")
+print(f"{'跳':>3}  {'延迟':>8}  {'IP':<18} {'线路':<12} {'ASN':<10} 地理位置 / 归属")
+print("-" * 88)
 for h in hops:
     if h["ip"] == "*":
-        print(f"{h['hop']:>3}  {'*':>8}  {'*':<18} {'':<10} {dim}超时{reset}")
+        print(f"{h['hop']:>3}  {'*':>8}  {'*':<18} {'':<12} {'':<10} {dim}超时{reset}")
         continue
-    rtt = f"{h['rtt']}ms" if h["rtt"] else "-"
+    rtt = f"{h['rtt']:.2f}ms" if h["rtt"] is not None else "-"
+    ln, lq, lc = asn_name(h["asn"]) if h.get("asn") else ("-", "", "yellow")
+    line_s = f"{ln}" if h.get("asn") else "-"
+    if lq == "优质":
+        line_s = f"{color_map['green']}{ln}{reset}"
+    elif h.get("asn") and lq == "普通":
+        line_s = f"{color_map['yellow']}{ln}{reset}"
     asn = f"AS{h['asn']}" if h["asn"] else "-"
-    meta = " / ".join(x for x in (h["where"], h["owner"]) if x) or h.get("host", "")
-    premium = h["asn"] in {"4809", "58807", "9929", "10099", "23764"}
-    asn_s = f"{c}{asn}{reset}" if premium and color == "green" else asn
-    print(f"{h['hop']:>3}  {rtt:>8}  {h['ip']:<18} {asn_s:<10} {meta}")
+    meta = " / ".join(x for x in (h["where"], h["owner"]) if x)
+    # 去掉过长 owner 噪声
+    if len(meta) > 56:
+        meta = meta[:55] + "…"
+    print(f"{h['hop']:>3}  {rtt:>8}  {h['ip']:<18} {line_s:<21} {asn:<10} {meta}")
 print()
 if not hops:
     print(f"{color_map['red']}未拿到任何跳数。请确认：已关代理、IP 正确、并用 sudo 运行。{reset}")
