@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-prog4"
+script_version="v2026-08-01-prog5"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -2808,7 +2808,6 @@ done
 }
 show_tail(){
 echo -ne "\r$(printf '%80s'|tr ' ' '=')\n"
-echo -ne "\r$Font_I${stail[stoday]}${stail[today]}${stail[stotal]}${stail[total]}${stail[thanks]} $Font_Suffix\n"
 echo -e ""
 }
 get_opts(){
@@ -3137,7 +3136,6 @@ netdata='{
     }'
 [[ $2 -eq 4 ]]&&hide_ipv4 $IP
 [[ $2 -eq 6 ]]&&hide_ipv6 $IP
-countRunTimes
 [[ $mode_skip != *"1"* || $mode_skip != *"3"* ]]&&db_bgptools $2
 [[ $mode_skip != *"1"* ]]&&db_henet $2
 [[ $mode_skip != *"1"* && $2 -eq 4 && -n ${bgp[prefixnum]} ]]&&get_neighbor
