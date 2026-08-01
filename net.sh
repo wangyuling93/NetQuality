@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route5"
+script_version="v2026-08-01-route6"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -2002,56 +2002,49 @@ case "$rmode" in
 2)tmode="--udp"
 esac
 local output
-# 部分 nexttrace 版本/环境下首行不一定含 "traceroute to"；旧逻辑会重试 10×50s，表现为卡在 0%/20%
+# 用人读格式+高并发时 LeoMoeAPI 易返回「网络故障」且 AS 为空；改用 --raw 并加 sakura PoW
 local max_retries=2
 local retry_delay=2
 local retry_count=0
-local has_hops=0
+local nt_extra=( -g cn --pow-provider sakura --parallel-requests 4 )
 while [[ $retry_count -lt $max_retries ]];do
-output=$(timeout -s SIGKILL 40 nexttrace -p 80 -q 4 -"$ipv" "$tmode" --psize 1400 "$domain" 2>/dev/null)
-output=$(echo "$output"|sed 's/\x1b\[[0-9;]*m//g')
-has_hops=0
-echo "$output"|grep -qE '^[0-9]+[[:space:]]+'&&has_hops=1
-if [[ $output != *"*please try again later*"* ]]&&[[ -n $output ]]&&{ [[ $has_hops -eq 1 ]]||[[ $output == *"traceroute to"* ]];};then
+output=$(timeout -s SIGKILL 45 nexttrace -p 80 -q 5 -"$ipv" $tmode --raw --psize 1400 "${nt_extra[@]}" "$domain" 2>/dev/null)
+if [[ $output != *"*please try again later*"* ]]&&[[ -n $output ]]&&[[ $output == *"|"* ]];then
 break
 fi
 retry_count=$((retry_count+1))
 [[ $retry_count -lt $max_retries ]]&&sleep "$retry_delay"
 done
-echo "$output"|awk -v rnum="$rnum" '
-    {
-        if ($1 ~ /^[0-9]+$/) {
-            hop = $1
-            ip = $2
-            if (ip != "*") {
-                as = ""
-                bracket = ""
-                desc = ""
-                ms = ""
-                # Extract AS information
-                for (i = 3; i <= NF; i++) {
-                    if ($i ~ /^AS[0-9]+/) {
-                        as = $i
-                    } else if ($i ~ /^\[.*\]$/) {
-                        bracket = $i
-                    } else {
-                        desc = desc " " $i
-                    }
-                }
-                # 去除 desc 开头的空格
-                sub(/^ /, "", desc)
-                # Get the first millisecond value from the next line
-                getline next_line
-                if (next_line ~ /[0-9]+\.[0-9]+ ms/) {
-                    match(next_line, /[0-9]+\.[0-9]+ ms/)
-                    ms = substr(next_line, RSTART, RLENGTH)
-                    gsub(/ /, "", ms)
-                }
-                # Print the formatted result
-                printf "|%s|%s|%s|%s|%s|%s|%s|\n", rnum, hop, ms, ip, as, bracket, desc
-            }
-        }
-    }'
+# raw: hop|ip|ptr|rtt|asn|一级|二级|三级|四级|owner|lat|lng
+local line hop ip rtt asn region city owner as bracket desc ms
+local -A seen_hop=()
+while IFS= read -r line;do
+[[ $line != *"|"* ]]&&continue
+IFS='|' read -r hop ip _ptr rtt asn region city _dist3 _dist4 owner _lat _lng <<<"$line"
+[[ -z $hop || $hop == *"["* ]]&&continue
+[[ ! $hop =~ ^[0-9]+$ ]]&&continue
+[[ -n ${seen_hop[$hop]} ]]&&continue
+[[ -z $ip || $ip == "*" ]]&&continue
+seen_hop[$hop]=1
+[[ $ip == 59.43.* ]]&&asn="4809"
+[[ $owner == *CTGNet* ]]&&asn="23764"
+as=""
+[[ -n $asn && $asn != "0" && $asn != "*" ]]&&as="AS${asn#AS}"
+bracket=""
+[[ -n $owner && $owner != *"网络故障"* ]]&&bracket="[${owner%% *}]"
+ms=""
+if [[ $rtt =~ ^[0-9]+([.][0-9]+)?$ ]];then
+ms="${rtt}ms"
+fi
+desc=""
+[[ -n $region && $region != *"网络故障"* ]]&&desc+=" $region"
+[[ -n $city && $city != *"网络故障"* && $city != "$region" ]]&&desc+=" $city"
+[[ -n $owner && $owner != *"网络故障"* ]]&&desc+=" $owner"
+desc="${desc# }"
+[[ -z $desc ]]&&desc="*"
+[[ $desc != "*" ]]&&desc="* $desc"
+printf "|%s|%s|%s|%s|%s|%s|%s|\n" "$rnum" "$hop" "$ms" "$ip" "$as" "$bracket" "$desc"
+done <<<"$output"
 }
 get_route_mode(){
 local route_pct_base route_pct_end route_pct_span
@@ -2111,10 +2104,11 @@ rdomain[1]="${pcode[$mode_route_pv]}-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[2]="${pcode[$mode_route_pv]}-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[3]="${pcode[$mode_route_pv]}-cm-v$ipv.ip.zstaticcdn.com"
 fi
-local max_threads=6
+# 详细模式并发过高会把 LeoMoeAPI 打成「网络故障」；保持低并发并错峰启动
+local max_threads=3
 local available_memory=1024
 [[ "$(uname)" != "Darwin" ]]&&available_memory=$(free -m|awk '/Mem:/ {print $7}')
-local max_threads_by_memory=$(echo "$available_memory / 40"|bc)
+local max_threads_by_memory=$(echo "$available_memory / 60"|bc)
 ((max_threads_by_memory<1))&&max_threads_by_memory=1
 ((max_threads_by_memory<max_threads))&&max_threads=$max_threads_by_memory
 local route_total=$((rmtestnum+1))
@@ -2154,6 +2148,8 @@ nexttrace_route "${rdomain[$i]}" 1 "$i" "$ipv"&
 route_pid=$!
 pids+=("$route_pid")
 route_pid_label[$route_pid]="$route_label"
+# 原版这里 sleep 2 错峰，避免 GeoAPI 限流
+sleep 2
 done
 while ((${#pids[@]}>0));do
 reap_route_mode_pids||sleep 0.15
