@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route8"
+script_version="v2026-08-01-route9"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -2068,7 +2068,7 @@ local ipv=$1
 local rdomain
 rmresu=()
 rmlabel=()
-rmcode[0]=31
+# 不再预热上海电信（原 rdomain[0]=sh-ct）；指定省份时从该省第一跳开始
 if [[ -z $mode_route_pv ]];then
 rmtestnum=18
 rmcode[1]=11
@@ -2092,7 +2092,6 @@ rmcode[18]=36
 rmlabel[16]="赣州"
 rmlabel[17]="赣州"
 rmlabel[18]="赣州"
-rdomain[0]="sh-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[1]="bj-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[2]="bj-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[3]="bj-cm-v$ipv.ip.zstaticcdn.com"
@@ -2123,7 +2122,6 @@ rmcode[6]="$mode_route_pv"
 rmlabel[4]="赣州"
 rmlabel[5]="赣州"
 rmlabel[6]="赣州"
-rdomain[0]="sh-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[1]="jx-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[2]="jx-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[3]="jx-cm-v$ipv.ip.zstaticcdn.com"
@@ -2135,7 +2133,6 @@ rmtestnum=3
 rmcode[1]="$mode_route_pv"
 rmcode[2]="$mode_route_pv"
 rmcode[3]="$mode_route_pv"
-rdomain[0]="sh-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[1]="${pcode[$mode_route_pv]}-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[2]="${pcode[$mode_route_pv]}-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[3]="${pcode[$mode_route_pv]}-cm-v$ipv.ip.zstaticcdn.com"
@@ -2147,7 +2144,7 @@ local available_memory=1024
 local max_threads_by_memory=$(echo "$available_memory / 60"|bc)
 ((max_threads_by_memory<1))&&max_threads_by_memory=1
 ((max_threads_by_memory<max_threads))&&max_threads=$max_threads_by_memory
-local route_total=$((rmtestnum+1))
+local route_total=$rmtestnum
 run_route_mode_jobs(){
 local pids=()
 local -A route_pid_label=()
@@ -2175,7 +2172,7 @@ pids=("${alive_pids[@]}")
 ((reaped==1))
 }
 local _isp=""
-for i in $(seq 0 $rmtestnum);do
+for i in $(seq 1 $rmtestnum);do
 if [[ -n ${rmlabel[$i]} ]];then
 case $((i%3)) in
 1)_isp="${sroute[ct]:-电信}";;
@@ -2252,7 +2249,7 @@ fi
 done <<<"$tmpresult"
 rmcn=()
 rmww=()
-for i in $(seq 0 $rmtestnum);do
+for i in $(seq 1 $rmtestnum);do
 ii=$(printf "%02d" "$i")
 rmcn[$ii]="Unknown"
 rmww[$ii]="Unknown"
