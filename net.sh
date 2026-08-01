@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route4"
+script_version="v2026-08-01-route5"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -2002,16 +2002,22 @@ case "$rmode" in
 2)tmode="--udp"
 esac
 local output
-local max_retries=10
-local retry_delay=5
+# 部分 nexttrace 版本/环境下首行不一定含 "traceroute to"；旧逻辑会重试 10×50s，表现为卡在 0%/20%
+local max_retries=2
+local retry_delay=2
 local retry_count=0
+local has_hops=0
 while [[ $retry_count -lt $max_retries ]];do
-output=$(timeout -s SIGKILL 50 nexttrace -p 80 -q 8 -"$ipv" "$tmode" --psize 1400 "$domain" 2>/dev/null)
-[[ $output != *"*please try again later*"* && $output == *"traceroute to"* ]]&&break
+output=$(timeout -s SIGKILL 40 nexttrace -p 80 -q 4 -"$ipv" "$tmode" --psize 1400 "$domain" 2>/dev/null)
+output=$(echo "$output"|sed 's/\x1b\[[0-9;]*m//g')
+has_hops=0
+echo "$output"|grep -qE '^[0-9]+[[:space:]]+'&&has_hops=1
+if [[ $output != *"*please try again later*"* ]]&&[[ -n $output ]]&&{ [[ $has_hops -eq 1 ]]||[[ $output == *"traceroute to"* ]];};then
+break
+fi
 retry_count=$((retry_count+1))
 [[ $retry_count -lt $max_retries ]]&&sleep "$retry_delay"
 done
-output=$(echo "$output"|sed 's/\x1b\[[0-9;]*m//g')
 echo "$output"|awk -v rnum="$rnum" '
     {
         if ($1 ~ /^[0-9]+$/) {
@@ -2105,10 +2111,11 @@ rdomain[1]="${pcode[$mode_route_pv]}-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[2]="${pcode[$mode_route_pv]}-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[3]="${pcode[$mode_route_pv]}-cm-v$ipv.ip.zstaticcdn.com"
 fi
-local max_threads=18
+local max_threads=6
 local available_memory=1024
 [[ "$(uname)" != "Darwin" ]]&&available_memory=$(free -m|awk '/Mem:/ {print $7}')
-local max_threads_by_memory=$(echo "$available_memory / 28"|bc)
+local max_threads_by_memory=$(echo "$available_memory / 40"|bc)
+((max_threads_by_memory<1))&&max_threads_by_memory=1
 ((max_threads_by_memory<max_threads))&&max_threads=$max_threads_by_memory
 local route_total=$((rmtestnum+1))
 run_route_mode_jobs(){
