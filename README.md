@@ -12,17 +12,23 @@
 
 在 **Mac 上**跑（测「你 → 机器」）。运行前请关闭 Shadowrocket 代理 / TUN，或把目标 IP 设为直连。
 
-```bash
-# 建议用 raw.githubusercontent（避免 jsDelivr 缓存旧版）
-bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/forward.sh) 1.2.3.4
+### 详细版（推荐，`forward2.sh`）
 
-# 或 jsDelivr（若仍是旧输出，把 main 换成最新 commit）
-bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/forward.sh) 1.2.3.4
+输出风格对齐回程 `-R`：报告头、`国内接入 -> 出境线路`、地理路径 / ASN 路径、逐跳详情（掩码 IP、ASN、`[owner]`、地理）。
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/forward2.sh) 1.2.3.4
 ```
 
-标题里带 **去程检测 v4** 才是新版。v4 会自动重试不完整路径，并把尾部连续超时收掉。
+版本号：`v2026-08-01-fwd2`。自动 TCP/ICMP 重试；需要 `sudo` + `python3` + NextTrace。
 
-会安装/调用 NextTrace，输出线路判定（CN2 / CMIN2 / 9929 等）+ 清晰跳数表。需要 sudo。
+### 摘要版（`forward.sh`）
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/forward.sh) 1.2.3.4
+```
+
+标题里带 **去程检测 v4** 为摘要版。会安装/调用 NextTrace，输出线路判定表格。需要 sudo。
 
 ## 使用方法（回程，在 VPS 上）
 
