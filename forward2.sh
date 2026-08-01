@@ -233,12 +233,12 @@ def mask_ip(ip: str) -> str:
     return ip
 
 def extract_region(desc: str) -> str:
-    discard = {"*", "中国", "电信", "联通", "移动"}
+    discard = {"*", "中国", "电信", "联通", "移动", "运营商内网", "RFC1918"}
     suffixes = ("省", "市", "县", "维吾尔自治区", "回族自治区", "壮族自治区", "自治区", "特别行政区")
     for part in desc.split():
         if not part or part in discard:
             continue
-        if any(x in part.lower() for x in (".", "rfc", "private", "local", "anycast", "网络故障", "asapi")):
+        if any(x in part.lower() for x in (".", "rfc", "private", "local", "anycast", "网络故障", "asapi", "运营商")):
             continue
         for suf in suffixes:
             if part.endswith(suf):
