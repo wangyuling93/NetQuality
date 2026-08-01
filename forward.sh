@@ -12,10 +12,11 @@ C_GREEN=$'\033[32m'
 C_YELLOW=$'\033[33m'
 C_RED=$'\033[31m'
 C_BLUE=$'\033[34m'
-C_PURPLE=$'\033[35m'
 C_DIM=$'\033[2m'
 
 TARGET="${1:-}"
+WORKDIR=$(mktemp -d)
+trap 'rm -rf "$WORKDIR"' EXIT
 
 is_ip() {
   [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || [[ "$1" =~ ^[0-9a-fA-F:]+$ ]]
@@ -38,7 +39,6 @@ ensure_nexttrace() {
 }
 
 warn_proxy() {
-  # Shadowrocket / Clash TUN 常见假 IP 段，开着代理时去程会测歪
   if ifconfig 2>/dev/null | grep -Eq 'inet 198\.18\.|inet 198\.19\.'; then
     echo -e "${C_RED}${C_BOLD}警告：检测到 198.18/19 网卡（多半是代理 TUN）。${C_RESET}"
     echo -e "${C_YELLOW}请先在 Shadowrocket 关闭代理 / 全局路由，或把目标 IP 设为直连，再重跑。${C_RESET}"
@@ -51,8 +51,8 @@ prompt_target() {
     return 0
   fi
   echo -ne "${C_CYAN}请输入要测去程的机器 IP：${C_RESET}"
-  read -r TARGET
-  TARGET=$(echo "$TARGET" | tr -d '[:space:]')
+  read -r TARGET </dev/tty || true
+  TARGET=$(echo "${TARGET:-}" | tr -d '[:space:]')
   if [[ -z "$TARGET" ]]; then
     echo -e "${C_RED}未输入 IP${C_RESET}" >&2
     exit 1
@@ -61,8 +61,14 @@ prompt_target() {
 
 run_trace() {
   local ip="$1"
-  local args=(-T -p 80 -q 3 -g cn --raw --psize 1400)
-  # IPv4/IPv6 hint
+  local out="$2"
+  local err="$3"
+  local mode="$4" # tcp|icmp
+  local -a args=(-q 3 -g cn --raw -m 30)
+
+  if [[ "$mode" == "tcp" ]]; then
+    args+=(-T -p 80 --psize 1400)
+  fi
   if [[ "$ip" == *:* ]]; then
     args+=(-6)
   else
@@ -70,31 +76,39 @@ run_trace() {
   fi
   args+=("$ip")
 
-  if [[ "$(uname -s)" == "Darwin" ]] || [[ "$(id -u)" -ne 0 ]]; then
-    if command -v sudo >/dev/null 2>&1; then
-      echo -e "${C_DIM}需要 root 权限抓包（可能提示输入密码）…${C_RESET}"
-      sudo nexttrace "${args[@]}"
-      return
-    fi
+  echo -e "${C_DIM}模式：${mode}；需要 root 权限（可能提示输入密码）…${C_RESET}"
+  if command -v sudo >/dev/null 2>&1 && [[ "$(id -u)" -ne 0 ]]; then
+    # 从 /dev/tty 读密码，避免经 curl|bash 时 sudo 无法交互
+    sudo nexttrace "${args[@]}" >"$out" 2>"$err" </dev/tty
+  else
+    nexttrace "${args[@]}" >"$out" 2>"$err"
   fi
-  nexttrace "${args[@]}"
+}
+
+extract_raw() {
+  local src="$1"
+  local dst="$2"
+  # 兼容 stdout/stderr 混排：两边都扫
+  grep -E '^[0-9]+\|' "$src" >"$dst" 2>/dev/null || true
 }
 
 classify() {
-  # stdin: raw nexttrace lines → stdout: summary via python for clarity
-  TARGET_IP="$TARGET" python3 - <<'PY'
+  local raw_file="$1"
+  TARGET_IP="$TARGET" RAW_FILE="$raw_file" python3 - <<'PY'
 import os, re, sys
 
 target = os.environ.get("TARGET_IP", "")
-lines = [ln.strip() for ln in sys.stdin if ln.strip()]
+path = os.environ["RAW_FILE"]
+with open(path, "r", encoding="utf-8", errors="replace") as f:
+    lines = [ln.strip() for ln in f if ln.strip()]
 
 hops = []
 for ln in lines:
     parts = ln.split("|")
-    if len(parts) < 5:
+    if len(parts) < 2:
         continue
     hop = parts[0]
-    ip = parts[1]
+    ip = parts[1] if len(parts) > 1 else "*"
     if ip == "*" or not ip:
         hops.append({"hop": hop, "ip": "*", "rtt": "", "asn": "", "where": "", "owner": ""})
         continue
@@ -115,7 +129,6 @@ asns = [h["asn"] for h in hops if h.get("asn")]
 all_asn = " ".join(f"AS{a}" for a in asns)
 
 def label():
-    # 优先级：精品网 > 普通骨干
     if "AS58807" in all_asn:
         return "移动CMIN2", "优质线路", "green"
     if "AS9929" in all_asn:
@@ -139,22 +152,13 @@ def label():
     return "未知", "路径不可见或探测失败", "red"
 
 name, quality, color = label()
-color_map = {
-    "green": "\033[32m",
-    "yellow": "\033[33m",
-    "red": "\033[31m",
-}
+color_map = {"green": "\033[32m", "yellow": "\033[33m", "red": "\033[31m"}
 c = color_map[color]
-bold = "\033[1m"
-cyan = "\033[36m"
-dim = "\033[2m"
-reset = "\033[0m"
-blue = "\033[34m"
+bold, cyan, dim, reset, blue = "\033[1m", "\033[36m", "\033[2m", "\033[0m", "\033[34m"
 
 print()
 print(f"{bold}{cyan}======== 去程检测摘要（本机 → {target}）========{reset}")
 print(f"{bold}判定线路：{c}{name} [{quality}]{reset}")
-# ASN 路径压缩
 seen = []
 for a in asns:
     if not seen or seen[-1] != a:
@@ -173,7 +177,6 @@ for h in hops:
     rtt = f"{h['rtt']}ms" if h["rtt"] else "-"
     asn = f"AS{h['asn']}" if h["asn"] else "-"
     meta = " / ".join(x for x in (h["where"], h["owner"]) if x) or h.get("host", "")
-    # highlight premium asn
     premium = h["asn"] in {"4809", "58807", "9929", "10099", "23764"}
     asn_s = f"{c}{asn}{reset}" if premium and color == "green" else asn
     print(f"{h['hop']:>3}  {rtt:>8}  {h['ip']:<18} {asn_s:<10} {meta}")
@@ -181,6 +184,10 @@ print()
 if not hops:
     print(f"{color_map['red']}未拿到任何跳数。请确认：已关代理、IP 正确、并用 sudo 运行。{reset}")
     sys.exit(2)
+visible = [h for h in hops if h["ip"] != "*"]
+if not visible:
+    print(f"{color_map['yellow']}全程超时（*）。目标可能禁 ICMP/TCP80，或本地防火墙拦了探测。{reset}")
+    sys.exit(3)
 PY
 }
 
@@ -197,27 +204,39 @@ main() {
   echo -e "${C_GREEN}正在探测去程：${C_BOLD}${TARGET}${C_RESET}${C_GREEN} …${C_RESET}"
   echo
 
-  local tmp
-  tmp=$(mktemp)
-  # nexttrace 会把进度打到 stderr；raw 在 stdout
-  if ! run_trace "$TARGET" >"$tmp" 2>/tmp/forward-nt.err; then
-    echo -e "${C_RED}nexttrace 执行失败：${C_RESET}" >&2
-    tail -n 20 /tmp/forward-nt.err >&2 || true
-    rm -f "$tmp"
+  local out="$WORKDIR/out.txt"
+  local err="$WORKDIR/err.txt"
+  local raw="$WORKDIR/raw.txt"
+  local combined="$WORKDIR/combined.txt"
+
+  # 先 TCP:80（和回程脚本同类），失败再试 ICMP
+  set +e
+  run_trace "$TARGET" "$out" "$err" "tcp"
+  local rc=$?
+  set -e
+  cat "$out" "$err" >"$combined" 2>/dev/null || true
+  extract_raw "$combined" "$raw"
+
+  if [[ ! -s "$raw" ]]; then
+    echo -e "${C_YELLOW}TCP 模式无有效跳数，改试 ICMP …${C_RESET}"
+    set +e
+    run_trace "$TARGET" "$out" "$err" "icmp"
+    rc=$?
+    set -e
+    cat "$out" "$err" >"$combined" 2>/dev/null || true
+    extract_raw "$combined" "$raw"
+  fi
+
+  if [[ ! -s "$raw" ]]; then
+    echo -e "${C_RED}没有解析到路由数据。${C_RESET}" >&2
+    echo -e "${C_YELLOW}--- nexttrace 输出 ---${C_RESET}" >&2
+    cat "$combined" >&2 || true
+    echo -e "${C_YELLOW}----------------------${C_RESET}" >&2
+    echo -e "${C_DIM}可手动验证：sudo nexttrace -T -p 80 -g cn ${TARGET}${C_RESET}" >&2
     exit 1
   fi
 
-  # 过滤出 raw 行（hop|...）
-  if ! grep -E '^[0-9]+\|' "$tmp" >/tmp/forward-raw.txt; then
-    echo -e "${C_RED}没有解析到路由数据。原始输出：${C_RESET}" >&2
-    cat "$tmp" >&2 || true
-    tail -n 30 /tmp/forward-nt.err >&2 || true
-    rm -f "$tmp"
-    exit 1
-  fi
-
-  classify </tmp/forward-raw.txt
-  rm -f "$tmp"
+  classify "$raw"
 }
 
 main "$@"
