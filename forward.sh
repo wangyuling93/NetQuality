@@ -350,6 +350,7 @@ for h in hops:
 asn_path = " → ".join(f"AS{a}({asn_name(a)[0]})" for a in seen) if seen else "(无 ASN)"
 print(f"ASN 路径：{blue}{asn_path}{reset}")
 print(f"{dim}CMIN2/CN2/9929=优质；CMI/163/4837=普通。下面每跳「质量」列可直接看。{reset}")
+print(f"{dim}延迟=本机到「这一跳」的往返时间，不是路程累加；中间路由常限速回 TTL，所以后面跳数延迟可能更低，属正常。{reset}")
 print()
 print(f"{bold}详细跳数：{reset}")
 print(f"{'跳':>3}  {'延迟':>8}  {'质量':<6} {'线路':<10} {'IP':<18} {'ASN':<10} 位置")
