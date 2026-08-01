@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-deps1"
+script_version="v2026-08-01-prog1"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -114,6 +114,7 @@ declare ibar=0
 declare bar_pid
 declare ibar_step=0
 declare main_pid=$$
+declare progress_detail_file=""
 declare PADDING=""
 declare useNIC=""
 declare usePROXY=""
@@ -377,16 +378,52 @@ show_progress_bar_ "$@" 1>&2
 show_progress_bar_(){
 local bar="\u280B\u2819\u2839\u2838\u283C\u2834\u2826\u2827\u2807\u280F"
 local n=${#bar}
+local detail=""
 while sleep 0.1;do
 if ! kill -0 $main_pid 2>/dev/null;then
 echo -ne ""
 exit
 fi
-echo -ne "\r$Font_Cyan$Font_B[$IP]# $1$Font_Cyan$Font_B$(printf '%*s' "$2" ''|tr ' ' '.') ${bar:ibar++*6%n:6} $(printf '%02d%%' $ibar_step) $Font_Suffix"
+detail=""
+[[ -n $progress_detail_file && -f $progress_detail_file ]]&&detail=$(tr -d '\n' <"$progress_detail_file" 2>/dev/null)
+echo -ne "\r$Font_LineClear\r$Font_Cyan$Font_B[$IP]# $1$Font_Cyan$Font_B$(printf '%*s' "$2" ''|tr ' ' '.') ${bar:ibar++*6%n:6} $(printf '%02d%%' $ibar_step)${detail:+ $Font_Yellow$detail}$Font_Suffix"
 done
 }
 kill_progress_bar(){
-kill "$bar_pid" 2>/dev/null&&echo -ne "\r"
+kill "$bar_pid" 2>/dev/null&&echo -ne "\r$Font_LineClear\r"
+[[ -n $progress_detail_file ]]&&rm -f "$progress_detail_file" 2>/dev/null
+progress_detail_file=""
+}
+set_progress_detail(){
+[[ -n $progress_detail_file ]]||return 0
+printf '%s' "$1" >"$progress_detail_file" 2>/dev/null
+}
+# 从探测域名生成进度文案，如 (北京 TCP 电信)
+route_progress_label(){
+local domain="$1"
+local proto="$2"
+local city_code isp_code city isp
+city_code=$(echo "$domain"|cut -d'-' -f1)
+isp_code=$(echo "$domain"|cut -d'-' -f2)
+case "$city_code" in
+bj)city="${sroute[bj]:-北京}";;
+sh)city="${sroute[sh]:-上海}";;
+gd)city="${sroute[gz]:-广州}";;
+hn)city="${sroute[hn]:-湖南}";;
+jx)city="${sroute[jx]:-江西}";;
+*)city="$city_code";;
+esac
+case "$isp_code" in
+ct)isp="${sroute[ct]:-电信}";;
+cu)isp="${sroute[cu]:-联通}";;
+cm)isp="${sroute[cm]:-移动}";;
+*)isp="$isp_code";;
+esac
+city="${city// /}"
+isp="${isp// /}"
+proto=$(echo "$proto"|tr 'a-z' 'A-Z')
+[[ -z $proto ]]&&proto="TCP"
+echo "($city $proto $isp)"
 }
 install_dependencies(){
 local is_dep=1
@@ -1612,6 +1649,7 @@ get_route(){
 ibar_step=19
 local temp_info="$Font_Cyan$Font_B${sinfo[route]}$Font_Suffix"
 ((ibar_step+=1))
+progress_detail_file=$(mktemp 2>/dev/null||echo "/tmp/netquality_route_$$.status")
 show_progress_bar "$temp_info" $((50-${sinfo[lroute]}))&
 bar_pid="$!"&&disown "$bar_pid"
 trap "kill_progress_bar" RETURN
@@ -1644,10 +1682,12 @@ local tmpresult=$(for i in $(seq 1 30)
 do
 local protocol="tcp"
 ((i%2==0))&&protocol="udp"
+local ridx=$(((i+1)/2))
+set_progress_detail "$(route_progress_label "${rdomain[$ridx]}" "$protocol")"
 if [[ $protocol == "udp" && $ipv == "6" ]];then
-mtr_test "${rdomain[$(((i+1)/2))]}" "$protocol" "$i" "$ipv"&
+mtr_test "${rdomain[$ridx]}" "$protocol" "$i" "$ipv"&
 else
-nexttrace_test "${rdomain[$(((i+1)/2))]}" "$protocol" "$i" "$ipv"&
+nexttrace_test "${rdomain[$ridx]}" "$protocol" "$i" "$ipv"&
 fi
 pids+=($!)
 ((current_threads++))
@@ -1663,7 +1703,8 @@ else
 sleep 1
 fi
 done
-wait)
+wait
+set_progress_detail "")
 while IFS= read -r line;do
 [[ -z $line ]]&&continue
 read -r index rww_value rcn_value <<<"$line"
@@ -1917,6 +1958,7 @@ get_route_mode(){
 ibar_step=19
 local temp_info="$Font_Cyan$Font_B${sinfo[moderoute]}$Font_Suffix"
 ((ibar_step+=1))
+progress_detail_file=$(mktemp 2>/dev/null||echo "/tmp/netquality_route_$$.status")
 show_progress_bar "$temp_info" $((50-${sinfo[lmoderoute]}))&
 bar_pid="$!"&&disown "$bar_pid"
 trap "kill_progress_bar" RETURN
@@ -1976,6 +2018,7 @@ local current_threads=0
 local tmpresult=$(for i in $(seq 0 $rmtestnum)
 do
 local protocol=1
+set_progress_detail "$(route_progress_label "${rdomain[$i]}" "TCP")"
 nexttrace_route "${rdomain[$i]}" "$protocol" "$i" "$ipv"&
 ((current_threads++))
 if ((current_threads>=max_threads));then
@@ -1985,7 +2028,8 @@ else
 sleep 2
 fi
 done
-wait)
+wait
+set_progress_detail "")
 rmmaxhop=()
 rmcnhop=()
 rmallasn=()
