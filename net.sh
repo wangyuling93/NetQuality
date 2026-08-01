@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route10"
+script_version="v2026-08-01-route11"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -374,19 +374,47 @@ local RunTimes=$(curl $CurlARG -s --max-time 10 "https://hits.xykt.de/net?action
 stail[today]=$(echo "$RunTimes"|jq '.daily')
 stail[total]=$(echo "$RunTimes"|jq '.total')
 }
+# 估算终端显示宽度（CJK≈2，ANSI 不计）；用于防止进度行超出 COLUMNS 换行刷屏
+term_display_width(){
+local s=$1
+local plain chars bytes
+plain=$(printf '%b' "$s"|sed $'s/\033\\[[0-9;]*[a-zA-Z]//g')
+chars=$(printf '%s' "$plain"|wc -m)
+bytes=$(printf '%s' "$plain"|wc -c)
+chars=${chars// /}
+bytes=${bytes// /}
+# UTF-8 多字节字符按「多出的字节/2」近似加宽（CJK 3字节→宽2）
+echo $((chars+(bytes-chars)/2))
+}
+term_columns(){
+local cols=""
+# 进度条写在 stderr；优先读 stderr 对应 tty 的宽度
+if [[ -t 2 ]];then
+cols=$(stty size </dev/stderr 2>/dev/null|awk '{print $2}')
+fi
+[[ -z $cols && -e /dev/tty ]]&&cols=$(stty size </dev/tty 2>/dev/null|awk '{print $2}')
+[[ -z $cols && -n ${COLUMNS:-} ]]&&cols=$COLUMNS
+[[ -z $cols || "$cols" -lt 40 ]]&&cols=80
+echo "$cols"
+}
 show_progress_bar(){
 show_progress_bar_ "$@" 1>&2
 }
 show_progress_bar_(){
-local bar="\u280B\u2819\u2839\u2838\u283C\u2834\u2826\u2827\u2807\u280F"
+# 用 $'...' 确保纺锤符为真实 Unicode，避免部分环境下 \u 字面量导致切片错乱
+local bar=$'\u280B\u2819\u2839\u2838\u283C\u2834\u2826\u2827\u2807\u280F'
 local n=${#bar}
 local detail=""
 local pct=$ibar_step
 local pct_line=""
 local detail_line=""
-while sleep 0.1;do
+local cols pad spin line_out est head_w tail tail_w
+# 非交互（重定向/管道）时降低刷新，避免日志被进度刷爆
+local interval=0.1
+[[ -t 2 ]]||interval=1
+while sleep "$interval";do
 if ! kill -0 $main_pid 2>/dev/null;then
-echo -ne ""
+printf '%b' ""
 exit
 fi
 pct=$ibar_step
@@ -402,11 +430,33 @@ IFS= read -r detail_line||true
 [[ $pct_line =~ ^[0-9]+$ ]]&&pct=$pct_line
 detail=$detail_line
 fi
-echo -ne "\r$Font_LineClear\r$Font_Cyan$Font_B[$IP]# $1$Font_Cyan$Font_B$(printf '%*s' "$2" ''|tr ' ' '.') ${bar:ibar++*6%n:6} $(printf '%02d%%' "$pct")${detail:+ $Font_Yellow$detail}$Font_Suffix"
+cols=$(term_columns)
+spin=${bar:ibar++%n:1}
+# 自适应点号：整行显示宽度必须 < 终端列数，否则 \r 无法回到逻辑行首 → 刷屏
+head_w=$(term_display_width "[$IP]# $1 ")
+tail=" $spin $(printf '%02d%%' "$pct")"
+[[ -n $detail ]]&&tail+=" $detail"
+tail_w=$(term_display_width "$tail")
+pad=$((cols-head_w-tail_w-1))
+((pad<0))&&pad=0
+((pad>$2))&&pad=$2
+# 仍放不下时优先丢掉点号，再缩短详情
+if ((head_w+tail_w+1>=cols));then
+pad=0
+if ((head_w+tail_w>=cols))&&[[ -n $detail ]];then
+detail="${detail:0:12}…"
+tail=" $spin $(printf '%02d%%' "$pct") $detail"
+tail_w=$(term_display_width "$tail")
+fi
+fi
+line_out="${Font_Cyan}${Font_B}[$IP]# $1${Font_Suffix}${Font_Cyan}${Font_B}$(printf '%*s' "$pad" ''|tr ' ' '.')${Font_Suffix} ${spin} $(printf '%02d%%' "$pct")"
+[[ -n $detail ]]&&line_out+=" ${Font_Yellow}${detail}${Font_Suffix}"
+# \r + 清行：行宽已限制在 COLUMNS 内，避免换行残留
+printf '\r%b\r%b' "$Font_LineClear" "$line_out"
 done
 }
 kill_progress_bar(){
-kill "$bar_pid" 2>/dev/null&&echo -ne "\r$Font_LineClear\r"
+kill "$bar_pid" 2>/dev/null&&printf '\r%b\r' "$Font_LineClear" 1>&2
 [[ -n $progress_detail_file ]]&&rm -f "$progress_detail_file" 2>/dev/null
 progress_detail_file=""
 }
