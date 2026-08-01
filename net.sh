@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route9"
+script_version="v2026-08-01-route10"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -92,11 +92,6 @@ declare -A rmcnhop
 declare -A rmcn
 declare -A rmww
 declare rmgia=0
-# 赣州地市探针（ip138 归属：赣州电信/联通/移动；勿用省网南昌或外省误标地址）
-# 旧误标：联通 116.255.128.98=河南郑州；移动 211.138.91.1=内蒙古；220.248.192.12/211.141.90.68=南昌省网
-declare gz_ct_ip="218.87.136.7"
-declare gz_cu_ip="113.195.64.68"
-declare gz_cm_ip="211.141.80.68"
 declare IPV4
 declare IPV6
 declare IPV4check=1
@@ -2070,7 +2065,8 @@ rmresu=()
 rmlabel=()
 # 不再预热上海电信（原 rdomain[0]=sh-ct）；指定省份时从该省第一跳开始
 if [[ -z $mode_route_pv ]];then
-rmtestnum=18
+# 北上广 + 湖南 + 江西省网（不含地市：地市回程含省干→城域绕路，不能代表省回程）
+rmtestnum=15
 rmcode[1]=11
 rmcode[2]=11
 rmcode[3]=11
@@ -2086,12 +2082,6 @@ rmcode[12]=43
 rmcode[13]=36
 rmcode[14]=36
 rmcode[15]=36
-rmcode[16]=36
-rmcode[17]=36
-rmcode[18]=36
-rmlabel[16]="赣州"
-rmlabel[17]="赣州"
-rmlabel[18]="赣州"
 rdomain[1]="bj-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[2]="bj-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[3]="bj-cm-v$ipv.ip.zstaticcdn.com"
@@ -2107,28 +2097,8 @@ rdomain[12]="hn-cm-v$ipv.ip.zstaticcdn.com"
 rdomain[13]="jx-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[14]="jx-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[15]="jx-cm-v$ipv.ip.zstaticcdn.com"
-rdomain[16]="$gz_ct_ip"
-rdomain[17]="$gz_cu_ip"
-rdomain[18]="$gz_cm_ip"
-elif [[ $mode_route_pv -eq 36 ]];then
-# 江西：省网三网 + 赣州地市三网（显示在下方）
-rmtestnum=6
-rmcode[1]="$mode_route_pv"
-rmcode[2]="$mode_route_pv"
-rmcode[3]="$mode_route_pv"
-rmcode[4]="$mode_route_pv"
-rmcode[5]="$mode_route_pv"
-rmcode[6]="$mode_route_pv"
-rmlabel[4]="赣州"
-rmlabel[5]="赣州"
-rmlabel[6]="赣州"
-rdomain[1]="jx-ct-v$ipv.ip.zstaticcdn.com"
-rdomain[2]="jx-cu-v$ipv.ip.zstaticcdn.com"
-rdomain[3]="jx-cm-v$ipv.ip.zstaticcdn.com"
-rdomain[4]="$gz_ct_ip"
-rdomain[5]="$gz_cu_ip"
-rdomain[6]="$gz_cm_ip"
 else
+# 指定省份：仅省网三网（江西等同南昌省干探针）
 rmtestnum=3
 rmcode[1]="$mode_route_pv"
 rmcode[2]="$mode_route_pv"
