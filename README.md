@@ -8,7 +8,19 @@
 - **完整路由模式** `-R`（不指定省份时）：默认同时测北京、上海、广东、湖南、江西
 - 指定省份时仍可单独测湖南 / 江西，例如 `-R 湖南`、`-R 赣`、`-R JX`
 
-## 使用方法
+## 去程检测（macOS / 本机 → VPS）
+
+在 **Mac 上**跑（测「你 → 机器」）。运行前请关闭 Shadowrocket 代理 / TUN，或把目标 IP 设为直连。
+
+```bash
+bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/forward.sh)
+# 或直接带 IP：
+bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/forward.sh) 1.2.3.4
+```
+
+会安装/调用 NextTrace，输出线路判定（CN2 / CMIN2 / 9929 等）+ 清晰跳数表。需要 sudo。
+
+## 使用方法（回程，在 VPS 上）
 
 ```bash
 # 默认双栈（回程含湖南、江西）
