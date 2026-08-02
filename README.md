@@ -7,6 +7,8 @@
 - **三网回程路由摘要**（默认模式第五节）：在北京 / 上海 / 广州之外，新增 **湖南、江西**
 - **完整路由模式** `-R`（不指定省份时）：默认同时测北京、上海、广东、湖南、江西
 - 指定省份时仍可单独测湖南 / 江西，例如 `-R 湖南`、`-R 赣`、`-R JX`
+- **线路判定**：入境为 AS4134 且路径含 AS4809 时标为 `CN2GT`（不再误标纯 `163`）
+- **`-R` 同时测 TCP + UDP**（两者回程可能不同；摘要模式第五节本来就分列 TCP/UDP）
 
 ## 去程检测（macOS / 本机 → VPS）
 
@@ -43,13 +45,15 @@ bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh)
 # 延迟模式
 bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -P
 
-# 完整路由：默认北上广 + 湖南 + 江西
+# 完整路由（TCP+UDP）：默认北上广 + 湖南 + 江西
 bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -R
 
-# 完整路由：只测湖南 / 江西
+# 完整路由：只测湖南 / 江西（各运营商 TCP+UDP）
 bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -R 湖南
 bash <(curl -Ls https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh) -R 江西
 ```
+
+> TCP / UDP / ICMP 回程经常不一致（QoS、策略路由不同）。`-R` 与摘要第五节会分开展示；`backtrace-jxyd` 用的是 ICMP，不宜与 TCP 结果直接等同。
 
 GitHub：https://github.com/wangyuling93/NetQuality  
 jsDelivr：`https://cdn.jsdelivr.net/gh/wangyuling93/NetQuality@main/net.sh`

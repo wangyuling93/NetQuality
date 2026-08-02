@@ -1,5 +1,5 @@
 #!/bin/bash
-script_version="v2026-08-01-route11"
+script_version="v2026-08-02-route12"
 check_bash(){
 current_bash_version=$(bash --version|head -n 1|awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+(\.[0-9]+)?/) print $i}')
 major_version=$(echo "$current_bash_version"|cut -d'.' -f1)
@@ -84,6 +84,8 @@ declare -A AS_MAPPING
 declare -A rmcode
 declare -A rmlabel
 declare -A rmresu
+declare -A rmproto
+declare -A rmisp
 declare rmtestnum
 declare -A rmallasn
 declare -A rmallgeo
@@ -160,7 +162,7 @@ shelp_lines=(
 "            -L                             Low data mode                              低数据模式（跳过测速环节）"
 "            -M                             Run with Interactive Interface             交互界面方式运行"
 "            -P                             Ping mode                                  三网延迟模式"
-"            -R [Province]                  Detailed route [optional province]         回程详细逐跳模式[可选指定省份]"
+"            -R [Province]                  Detailed route TCP+UDP [optional province] 回程详细逐跳(TCP+UDP)[可选省份]"
 "            -S 1234567                     Skip sections by number                    跳过相应章节"
 "                                           例: -S 123467 回程汇总 | -R -S 123 回程详细")
 shelp=$(printf "%s\n" "${shelp_lines[@]}")
@@ -189,8 +191,8 @@ sinfo[delay]="Checking China Mainland TCP Delay"
 sinfo[ldelay]=33
 sinfo[route]="Checking Route to China Mainland"
 sinfo[lroute]=32
-sinfo[moderoute]="Checking Route details to Specified Province"
-sinfo[lmoderoute]=44
+sinfo[moderoute]="Checking TCP/UDP Route details"
+sinfo[lmoderoute]=34
 sinfo[speedtest]="Checking Speedtest of China "
 sinfo[lspeedtest]=28
 sinfo[iperf]="Checking Global Transfer of "
@@ -289,8 +291,8 @@ sinfo[delay]="正在检测大陆三网TCP大包延迟"
 sinfo[ldelay]=27
 sinfo[route]="正在检测大陆三网回程线路"
 sinfo[lroute]=24
-sinfo[moderoute]="正在检测TCP回程详细路由"
-sinfo[lmoderoute]=23
+sinfo[moderoute]="正在检测TCP/UDP回程详细路由"
+sinfo[lmoderoute]=27
 sinfo[speedtest]="正在检测三网Speedtest之"
 sinfo[lspeedtest]=23
 sinfo[iperf]="正在检测国际互连："
@@ -1483,6 +1485,90 @@ fi
 done
 ((count%resu_per_line!=0))&&echo
 }
+# 入境 ASN + 全路径 ASN → 细化线路标签（与 mtr_test 对齐）
+# $1=入口 ASN（4134 或 AS4134），$2=全路径 ASN 串；结果写入 refine_cn_label_result
+refine_cn_label(){
+local entry="${1#AS}"
+local all_asn="$2"
+refine_cn_label_result=""
+case "$entry" in
+4134)
+refine_cn_label_result="163"
+if [[ $all_asn == *AS9929* ]];then
+refine_cn_label_result="9929"
+elif [[ $all_asn == *AS10099* ]];then
+refine_cn_label_result="10099"
+elif [[ $all_asn == *AS23764* && $all_asn == *AS4134* ]];then
+refine_cn_label_result="CN2GT"
+elif [[ $all_asn == *AS4809* && $all_asn == *AS4134* ]];then
+refine_cn_label_result="CN2GT"
+elif [[ $all_asn == *AS23764* ]];then
+refine_cn_label_result="CTGGIA"
+elif [[ $all_asn == *AS4809* ]];then
+refine_cn_label_result="CN2GIA"
+elif [[ $all_asn == *AS58807* ]];then
+refine_cn_label_result="CMIN2"
+fi
+;;
+4837)
+refine_cn_label_result="4837"
+if [[ $all_asn == *AS9929* ]];then
+refine_cn_label_result="9929"
+elif [[ $all_asn == *AS10099* ]];then
+refine_cn_label_result="10099"
+elif [[ $all_asn == *AS23764* && $all_asn == *AS4134* ]];then
+refine_cn_label_result="CN2GT"
+elif [[ $all_asn == *AS4809* && $all_asn == *AS4134* ]];then
+refine_cn_label_result="CN2GT"
+elif [[ $all_asn == *AS23764* ]];then
+refine_cn_label_result="CTGGIA"
+elif [[ $all_asn == *AS4809* ]];then
+refine_cn_label_result="CN2GIA"
+elif [[ $all_asn == *AS58807* ]];then
+refine_cn_label_result="CMIN2"
+fi
+;;
+58453)
+refine_cn_label_result="CMI"
+if [[ $all_asn == *AS9929* ]];then
+refine_cn_label_result="9929"
+elif [[ $all_asn == *AS10099* ]];then
+refine_cn_label_result="10099"
+elif [[ $all_asn == *AS23764* && $all_asn == *AS4134* ]];then
+refine_cn_label_result="CN2GT"
+elif [[ $all_asn == *AS4809* && $all_asn == *AS4134* ]];then
+refine_cn_label_result="CN2GT"
+elif [[ $all_asn == *AS23764* ]];then
+refine_cn_label_result="CTGGIA"
+elif [[ $all_asn == *AS4809* ]];then
+refine_cn_label_result="CN2GIA"
+elif [[ $all_asn == *AS58807* ]];then
+refine_cn_label_result="CMIN2"
+fi
+;;
+9808)
+refine_cn_label_result="CMI"
+if [[ $all_asn == *AS9929* ]];then
+refine_cn_label_result="9929"
+elif [[ $all_asn == *AS10099* ]];then
+refine_cn_label_result="10099"
+elif [[ $all_asn == *AS23764* && $all_asn == *AS4134* ]];then
+refine_cn_label_result="CN2GT"
+elif [[ $all_asn == *AS4809* && $all_asn == *AS4134* ]];then
+refine_cn_label_result="CN2GT"
+elif [[ $all_asn == *AS23764* ]];then
+refine_cn_label_result="CTGGIA"
+elif [[ $all_asn == *AS4809* ]];then
+refine_cn_label_result="CN2GIA"
+elif [[ $all_asn == *AS58807* ]];then
+refine_cn_label_result="CMIN2"
+fi
+;;
+*)
+refine_cn_label_result=""
+;;
+esac
+}
 nexttrace_test(){
 local domain="$1"
 local rmode="$2"
@@ -1534,19 +1620,14 @@ done <<<"$response"
 [[ $cn_hop == 0 || $cn_hop == $max_hop ]]&&tresucn="Hidden"
 [[ ${asns[$cn_hop]} == "17676" ]]&&cn_hop=$((cn_hop+1))
 case "${asns[$cn_hop]}" in
-"4134")tresucn="163"
-;;
-"4837")tresucn="4837"
-if ((cn_hop>1));then
+"4134"|"4837"|"58453"|"9808")
+refine_cn_label "${asns[$cn_hop]}" "$all_asn"
+tresucn="$refine_cn_label_result"
+if [[ ${asns[$cn_hop]} == "4837" ]]&&((cn_hop>1));then
 [[ ${asns[$((cn_hop-1))]} == "10099" ]]&&tresucn="10099"
 fi
 ;;
-"58453")tresucn="CMI"
-;;
 "58807")tresucn="CMIN2"
-;;
-"9808")tresucn="CMI"
-[[ $all_asn == *AS58807* ]]&&tresucn="CMIN2"
 ;;
 "9929")tresucn="9929"
 ;;
@@ -1579,6 +1660,8 @@ elif [[ $all_asn == *AS9929* ]];then
 tresucn="9929"
 elif [[ $all_asn == *AS10099* ]];then
 tresucn="10099"
+elif [[ $all_asn == *AS4809* && $all_asn == *AS4134* ]];then
+tresucn="CN2GT"
 elif [[ $all_asn == *AS4809* ]];then
 tresucn="CN2"
 elif [[ $all_asn == *AS9808* ]];then
@@ -1921,23 +2004,30 @@ local tmppv=""
 local tmpfont=""
 local tmpback=""
 local tmpdelay=""
+local tmpproto=""
+echo -ne "\r$Font_D${Font_I}（详细模式同时测 TCP/UDP；两者回程可能不同）$Font_Suffix\n"
 for ((i=1; i<=rmtestnum; i++));do
 ii=$(printf "%02d" "$i")
-case $((i%3)) in
-1)tmppv="电信"
+case "${rmisp[$i]:-$(((i-1)%3))}" in
+0)tmppv="电信"
 tmpfont="$Font_Cyan"
 tmpback="$Back_Cyan"
 ;;
-2)tmppv="联通"
+1)tmppv="联通"
 tmpfont="$Font_Green"
 tmpback="$Back_Green"
 ;;
-0)tmppv="移动"
+2)tmppv="移动"
 tmpfont="$Font_Purple"
 tmpback="$Back_Purple"
+;;
+esac
+case "${rmproto[$i]:-1}" in
+2)tmpproto="UDP";;
+*)tmpproto="TCP";;
 esac
 local cityname="${rmlabel[$i]:-${pname[${rmcode[$i]}]}}"
-echo -ne "\r$tmpback$Font_White$Font_B  $cityname $tmppv  $Font_Suffix$Back_White$tmpfont$Font_B  ${rmww[$ii]} -> ${rmcn[$ii]}  $Font_Suffix\n"
+echo -ne "\r$tmpback$Font_White$Font_B  $cityname $tmppv $tmpproto  $Font_Suffix$Back_White$tmpfont$Font_B  ${rmww[$ii]} -> ${rmcn[$ii]}  $Font_Suffix\n"
 echo -ne "\r$Back_Blue$Font_White地理路径：${rmallgeo[$ii]}    自治系统路径：${rmallasn[$ii]} $Font_Suffix\n"
 local varb="${rmmaxhop[$ii]:-0}"
 varb=${varb#0}
@@ -1983,8 +2073,8 @@ echo -ne "\r$Font_B$(printf '%2s' "$j")$mergejump$Font_Suffix $tmpdelay  $(print
 fi
 fi
 done
-# 每个城市（电信/联通/移动）结束后空一行
-((i%3==0 && i<rmtestnum))&&echo -ne "\n"
+# 每个城市（电信/联通/移动 × TCP/UDP）结束后空一行
+((i%6==0 && i<rmtestnum))&&echo -ne "\n"
 done
 fi
 }
@@ -2157,6 +2247,31 @@ rdomain[1]="${pcode[$mode_route_pv]}-ct-v$ipv.ip.zstaticcdn.com"
 rdomain[2]="${pcode[$mode_route_pv]}-cu-v$ipv.ip.zstaticcdn.com"
 rdomain[3]="${pcode[$mode_route_pv]}-cm-v$ipv.ip.zstaticcdn.com"
 fi
+# 展开为 TCP+UDP 双协议（回程可能因协议不同）
+local base_num=$rmtestnum
+local -a _base_dom _base_code
+local b new_i p
+for ((b=1; b<=base_num; b++));do
+_base_dom[b]="${rdomain[$b]}"
+_base_code[b]="${rmcode[$b]}"
+done
+rdomain=()
+rmcode=()
+rmproto=()
+rmisp=()
+rmlabel=()
+new_i=0
+for ((b=1; b<=base_num; b++));do
+for p in 1 2;do
+((new_i++))
+rdomain[$new_i]="${_base_dom[b]}"
+rmcode[$new_i]="${_base_code[b]}"
+rmproto[$new_i]="$p"
+rmisp[$new_i]=$(((b-1)%3))
+rmlabel[$new_i]="${pname[${_base_code[b]}]}"
+done
+done
+rmtestnum=$new_i
 # 详细模式并发过高会把 LeoMoeAPI 打成「网络故障」；保持低并发并错峰启动
 local max_threads=3
 local available_memory=1024
@@ -2172,6 +2287,7 @@ local route_done=0
 local route_label=""
 local route_pid=""
 local i pid alive_pids lab reaped
+local _isp="" _proto=""
 reap_route_mode_pids(){
 alive_pids=()
 reaped=0
@@ -2191,24 +2307,23 @@ done
 pids=("${alive_pids[@]}")
 ((reaped==1))
 }
-local _isp=""
 for i in $(seq 1 $rmtestnum);do
-if [[ -n ${rmlabel[$i]} ]];then
-case $((i%3)) in
-1)_isp="${sroute[ct]:-电信}";;
-2)_isp="${sroute[cu]:-联通}";;
-0)_isp="${sroute[cm]:-移动}";;
+case "${rmisp[$i]}" in
+0)_isp="${sroute[ct]:-电信}";;
+1)_isp="${sroute[cu]:-联通}";;
+2)_isp="${sroute[cm]:-移动}";;
 esac
 _isp="${_isp// /}"
-route_label="(${rmlabel[$i]} TCP $_isp)"
-else
-route_label=$(route_progress_label "${rdomain[$i]}" "TCP")
-fi
+case "${rmproto[$i]}" in
+2)_proto="UDP";;
+*)_proto="TCP";;
+esac
+route_label="(${rmlabel[$i]:-?} $_proto $_isp)"
 while ((${#pids[@]}>=max_threads));do
 reap_route_mode_pids||sleep 0.15
 done
 route_progress_paint "$route_pct_base" "$route_pct_span" "$route_pct_end" "$route_done" "$route_total" "$route_label"
-nexttrace_route "${rdomain[$i]}" 1 "$i" "$ipv"&
+nexttrace_route "${rdomain[$i]}" "${rmproto[$i]}" "$i" "$ipv"&
 route_pid=$!
 pids+=("$route_pid")
 route_pid_label[$route_pid]="$route_label"
@@ -2278,22 +2393,19 @@ local vara="${rmcnhop[$ii]:-0}"
 vara=${vara#0}
 [[ ${rmresu[$ii${rmcnhop[$ii]}3]} == "AS17676" ]]&&rmcnhop[$ii]=$(printf "%02d" "$((vara+1))")
 case "${rmresu[$ii${rmcnhop[$ii]}3]}" in
-"AS4134")rmcn[$ii]="163"
-;;
-"AS4837")rmcn[$ii]="4837"
+"AS4134"|"AS4837"|"AS58453"|"AS9808")
+refine_cn_label "${rmresu[$ii${rmcnhop[$ii]}3]}" "${rmallasn[$ii]}"
+rmcn[$ii]="$refine_cn_label_result"
+if [[ ${rmresu[$ii${rmcnhop[$ii]}3]} == "AS4837" ]];then
 local vara="${rmcnhop[$ii]:-0}"
 vara=${vara#0}
 if ((vara>1));then
 varb=$(printf "%02d" "$((vara-1))")
 [[ ${rmresu[$ii${varb}3]} == "AS10099" ]]&&rmcn[$ii]="10099"
 fi
-;;
-"AS58453")rmcn[$ii]="CMI"
+fi
 ;;
 "AS58807")rmcn[$ii]="CMIN2"
-;;
-"AS9808")rmcn[$ii]="CMI"
-[[ ${rmallasn[$ii]} == *AS58807* ]]&&rmcn[$ii]="CMIN2"
 ;;
 "AS9929")rmcn[$ii]="9929"
 ;;
@@ -2346,6 +2458,8 @@ elif [[ ${rmallasn[$ii]} == *AS9929* ]];then
 rmcn[$ii]="9929"
 elif [[ ${rmallasn[$ii]} == *AS10099* ]];then
 rmcn[$ii]="10099"
+elif [[ ${rmallasn[$ii]} == *AS4809* && ${rmallasn[$ii]} == *AS4134* ]];then
+rmcn[$ii]="CN2GT"
 elif [[ ${rmallasn[$ii]} == *AS4809* ]];then
 rmcn[$ii]="CN2"
 elif [[ ${rmallasn[$ii]} == *AS9808* ]];then
