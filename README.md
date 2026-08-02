@@ -28,9 +28,12 @@ bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/f
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/forward.sh) 1.2.3.4
+
+# 可选：ICMP / TCP / UDP 全对比（更慢；默认不必三开）
+bash <(curl -Ls https://raw.githubusercontent.com/wangyuling93/NetQuality/main/forward.sh) --all 1.2.3.4
 ```
 
-标题里带 **去程检测 v4** 为摘要版。会安装/调用 NextTrace，输出线路判定表格。需要 sudo。
+版本：`v2026-08-02-fwd5`。默认 **ICMP→TCP 递进**（打到目标即停）；含 CN2GT 混合判定与协议标注。需要 sudo。
 
 ## 使用方法（回程，在 VPS 上）
 
